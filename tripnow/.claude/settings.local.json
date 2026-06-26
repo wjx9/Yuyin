@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import requests; print\\(''''requests'''', requests.__version__\\)\")",
+      "Bash(TRIPNOW_API_KEY=sk-test python main.py --help)",
+      "Bash(mkdir -p tests)",
+      "Bash(touch tests/__init__.py)",
+      "Bash(python -m pytest -q)",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/python.exe -m pip install -q -r requirements-dev.txt)",
+      "Bash(.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(env)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m pytest -q)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \":*)"
+    ]
+  }
+}
