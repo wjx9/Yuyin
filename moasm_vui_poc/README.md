@@ -105,22 +105,22 @@ cp .env.example .env   # 然后编辑 .env 填入 TRIPNOW_API_KEY
 
 ```bash
 # 公开信息（无需 union_id）
-python main.py ask "查询明天北京到上海的火车票"
-python main.py ask "CZ3427航班今天的预计到达时间"
-python main.py ask "查询明天北京到上海的机票" --stream      # 流式，仅 openapi
+python server_py/main.py ask "查询明天北京到上海的火车票"
+python server_py/main.py ask "CZ3427航班今天的预计到达时间"
+python server_py/main.py ask "查询明天北京到上海的机票" --stream      # 流式，仅 openapi
 
 # 个人信息（需 union_id）
-python main.py trips --union-id 0cQnX8ZTcizSwT15AqQY2rqe8
-python main.py me "查一下我的行程有没有更新状态" --union-id xxxx
-python main.py subscribe "关注今天D7561次广州到深圳北的一等座" --union-id xxxx
+python server_py/main.py trips --union-id 0cQnX8ZTcizSwT15AqQY2rqe8
+python server_py/main.py me "查一下我的行程有没有更新状态" --union-id xxxx
+python server_py/main.py subscribe "关注今天D7561次广州到深圳北的一等座" --union-id xxxx
 
 # prompts 管理（仅 mcp）
-python main.py --transport mcp prompts get
-python main.py --transport mcp prompts set '[{"scenario":1,"prompt":"..."}]'
+python server_py/main.py --transport mcp prompts get
+python server_py/main.py --transport mcp prompts set '[{"scenario":1,"prompt":"..."}]'
 
 # 全局开关
-python main.py --transport mcp --env prod ask "..."
-python main.py ask "..." --no-data         # 不返回结构化数据
+python server_py/main.py --transport mcp --env prod ask "..."
+python server_py/main.py ask "..." --no-data         # 不返回结构化数据
 ```
 
 ### 4.2 作为库调用
@@ -158,50 +158,47 @@ union_id = extract_union_id("https://官网?union_id=xxxx&...")
 ## 5. 目录结构
 
 ```
-tripnow/
-├── main.py                     # TripNow 单 provider CLI 入口
-├── chat_app.py                 # 多能力分流总流程 demo 入口（见 §8）
+moasm_vui_poc/                  # 仓库根（.git 在此）
+├── README.md / .gitignore
 ├── requirements.txt / requirements-dev.txt
+├── pytest.ini                  # testpaths=server_py/tests；pythonpath=. server_py
 ├── .env.example                # 配置模板（复制为 .env）
-├── README.md
 ├── init_docs/                  # 官方接入文档（PDF/DOCX/PNG）
-├── tripnow_client/             # provider：出行（OpenAPI / MCP 双传输）
-│   ├── config.py               # Settings + build_transport（接入方式开关）
-│   ├── models.py               # ChatRequest / ChatResponse 等协议契约
-│   ├── errors.py               # 统一异常体系
-│   ├── cli.py                  # 命令行表现层
-│   ├── transport/              # 传输层（接入方式）
-│   │   ├── base.py             # TripNowTransport 抽象 + PromptsCapable
-│   │   ├── openapi.py          # REST 实现（含 SSE 流式）
-│   │   └── mcp.py              # JSON-RPC 实现（含 prompts）
-│   └── services/               # 业务层（信息归属）
-│       ├── public.py           # 公开信息（无 union_id）
-│       ├── personal.py         # 个人信息（带 union_id）
-│       └── oauth.py            # union_id 解析辅助
-├── kuaidi100_client/           # provider：快递查询（MD5 签名 REST）
-│   ├── client.py / service.py / models.py / errors.py / config.py
-├── amap_client/                # provider：高德地图（REST 默认 / A2A 可切，见 §8.8）
-│   ├── service.py(ABC+A2A) / rest_service.py / rest_client.py / client.py(A2A)
-│   ├── parser.py(QueryParser) / models.py / errors.py / config.py
-├── tencent_news_client/        # provider：腾讯新闻（官方 Skill/CLI 子进程封装）
-│   ├── client.py / service.py / models.py / errors.py / config.py
-├── routing/                    # 顶层编排（分流）层，依赖各 provider
-│   ├── handler.py              # Handler(ABC) / RouteContext / RouteResult / IntentSpec
-│   ├── classifier.py           # GeminiClassifier + KeywordClassifier 兜底
-│   ├── dispatcher.py           # 分类 → 选 Handler → 执行
-│   ├── gemini.py               # Gemini REST 客户端（分类 + 闲聊）
-│   ├── factory.py              # build_dispatcher：按 env 装配可用能力
-│   └── handlers/               # 各 provider 的薄适配器
-│       ├── tripnow.py          # tripnow_public / tripnow_personal
-│       ├── kuaidi100.py        # express_tracking
-│       ├── amap.py             # amap + GeminiMapQueryParser（REST 后端查询解析）
-│       ├── tencent_news.py     # tencent_hot_news / tencent_weather（search/fact_check 已下线，类保留）
-│       └── chitchat.py         # chitchat（默认兜底，走 Gemini）
-├── server/                     # client-server 模式（加法，不动现有 demo，见 §8.10）
-│   ├── service.py / session.py / auth.py(mock凭证) / schemas.py / http_server.py
-├── chat_app.py                 # 入口①：本地 CLI（交互/单轮）
-├── serve.py                    # 入口②：HTTP 服务端（复用同一 Dispatcher）
-└── tests/                      # pytest（129 用例，网络/子进程全 mock）
+│
+├── ui/                         # 共享呈现层（server_py 与 client_py 复用，故置于根，见 §8.9）
+│   ├── presenter.py            # Presenter 抽象 + PlainPresenter 兜底
+│   ├── terminal.py             # TerminalPresenter（聊天气泡风格）
+│   └── layout.py               # CJK 宽度/折行/画框（无副作用纯函数）
+│
+├── server_py/                  # 后端引擎：多能力分流 + HTTP 服务端（内部用扁平绝对导入）
+│   ├── main.py                 # TripNow 单 provider CLI 入口
+│   ├── chat_app.py             # 入口①：本地多能力 CLI（交互/单轮，见 §8）
+│   ├── serve.py                # 入口②：HTTP 服务端（复用同一 Dispatcher，见 §8.10）
+│   ├── run_cases.py            # 批量回归 demo（真实网络调用）
+│   ├── tripnow_client/         # provider：出行（OpenAPI / MCP 双传输）
+│   │   ├── config.py           # Settings + build_transport（接入方式开关）
+│   │   ├── models.py           # ChatRequest / ChatResponse 等协议契约
+│   │   ├── errors.py           # 统一异常体系
+│   │   ├── cli.py              # 命令行表现层
+│   │   ├── transport/          # 传输层：base(抽象+PromptsCapable) / openapi(REST+SSE) / mcp(JSON-RPC)
+│   │   └── services/           # 业务层：public(无 union_id) / personal(带 union_id) / oauth
+│   ├── kuaidi100_client/       # provider：快递查询（MD5 签名 REST）
+│   ├── amap_client/            # provider：高德地图（REST 默认 / A2A 可切，见 §8.8）
+│   ├── tencent_news_client/    # provider：腾讯新闻（官方 Skill/CLI 子进程封装）
+│   ├── music163/               # provider：网易云音乐
+│   ├── routing/                # 顶层编排（分流）层，依赖各 provider
+│   │   ├── handler.py          # Handler(ABC) / RouteContext / RouteResult / IntentSpec
+│   │   ├── classifier.py       # GeminiClassifier + KeywordClassifier 兜底
+│   │   ├── dispatcher.py       # 分类 → 选 Handler → 执行
+│   │   ├── gemini.py           # Gemini REST 客户端（分类 + 闲聊）
+│   │   ├── factory.py          # build_dispatcher：按 env 装配可用能力
+│   │   └── handlers/           # 各 provider 的薄适配器（tripnow/kuaidi100/amap/tencent_news/chitchat）
+│   ├── server/                 # client-server 服务端适配层（见 §8.10）
+│   │   ├── service.py / session.py / auth.py(mock凭证) / schemas.py / http_server.py
+│   └── tests/                  # pytest（129 用例，网络/子进程全 mock）
+│
+├── client_py/                  # Python 终端客户端（HTTP 连 server_py，复用根级 ui/）
+└── client_flutter/             # Flutter 客户端（手机端）
 ```
 
 ---
@@ -297,14 +294,14 @@ dispatcher = build_dispatcher(extra_handlers=[WeatherHandler()])
 #   AMAP_KEY                             —— 启用高德地图
 #   TENCENT_NEWS_API_KEY                 —— 启用腾讯新闻（需先装 tencent-news-cli，见 §8.7）
 
-python chat_app.py                          # 交互模式
-python chat_app.py "深圳北到广州的高铁"        # 单轮：命中 tripnow_public
-python chat_app.py --show-intent "附近的咖啡"  # 打印命中意图：amap
-python chat_app.py "查下 SF1234567890 到哪了"  # 命中 express_tracking
-python chat_app.py --union-id xxxx "我的行程"  # 命中 tripnow_personal
-python chat_app.py "今天有什么大新闻"          # 命中 tencent_hot_news
-python chat_app.py "深圳明天下雨吗"            # 命中 tencent_weather
-python chat_app.py "看下 apple 公司的股价"     # 命中 chitchat，自动联网检索后作答
+python server_py/chat_app.py                          # 交互模式
+python server_py/chat_app.py "深圳北到广州的高铁"        # 单轮：命中 tripnow_public
+python server_py/chat_app.py --show-intent "附近的咖啡"  # 打印命中意图：amap
+python server_py/chat_app.py "查下 SF1234567890 到哪了"  # 命中 express_tracking
+python server_py/chat_app.py --union-id xxxx "我的行程"  # 命中 tripnow_personal
+python server_py/chat_app.py "今天有什么大新闻"          # 命中 tencent_hot_news
+python server_py/chat_app.py "深圳明天下雨吗"            # 命中 tencent_weather
+python server_py/chat_app.py "看下 apple 公司的股价"     # 命中 chitchat，自动联网检索后作答
 ```
 
 链路：`用户输入 → Dispatcher.classify（Gemini 分类，失败/非法回退关键词）
@@ -428,9 +425,9 @@ REST 后端的自然语言理解靠注入的 `QueryParser`（接口在 `amap_cli
 是两个平级入口，复用同一套 `build_dispatcher()`。
 
 ```bash
-python serve.py                 # 监听 0.0.0.0:8000，同一 WiFi 下手机可访问
-python serve.py --port 9000 --debug
-python serve.py --token <密钥>   # 开启 Bearer 鉴权（公网/阿里云建议开）
+python server_py/serve.py                 # 监听 0.0.0.0:8000，同一 WiFi 下手机可访问
+python server_py/serve.py --port 9000 --debug
+python server_py/serve.py --token <密钥>   # 开启 Bearer 鉴权（公网/阿里云建议开）
 ```
 
 启动后控制台会打印**局域网地址**（如 `http://192.168.x.x:8000`），手机填这个即可。
@@ -492,7 +489,7 @@ UI 布局纯函数（宽度/折行/画框）；会话记忆滑动窗口/落盘�
 **批量回归 demo**（会发起真实网络调用，需 `.env` 配好各 key）：
 
 ```bash
-python run_cases.py          # 逐条跑全部 demo 用例，打印 输入/命中意图/输出，末尾给逐条与汇总 pass
+python server_py/run_cases.py          # 逐条跑全部 demo 用例，打印 输入/命中意图/输出，末尾给逐条与汇总 pass
 ```
 
 ---

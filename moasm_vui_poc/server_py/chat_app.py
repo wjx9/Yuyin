@@ -21,6 +21,12 @@ import argparse
 import os
 import sys
 
+# 本文件在 server_py/ 下：运行时脚本目录(server_py)自动入 sys.path，故 import routing 等可用；
+# 但共享模块 ui 在项目根，需把根目录也加入 sys.path 才能 import ui。
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 # Windows 中文控制台默认 gbk 编码，遇到 emoji 等非 gbk 字符（如天气结果里的 ⛅）会
 # 直接抛 UnicodeEncodeError 崩溃。保留控制台原编码（中文照常显示），仅把无法编码的
 # 字符替换为占位符，避免崩溃。
