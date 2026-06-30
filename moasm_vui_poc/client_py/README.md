@@ -1,6 +1,6 @@
 # client_py · Python 客户端（client-server 客户端）
 
-把 `chat_app.py` 的"本地直连 Dispatcher"换成"HTTP 调远端 `serve.py`"，其余体验尽量保持一致。
+把 `server_py/chat_app.py` 的"本地直连 Dispatcher"换成"HTTP 调远端 `server_py/serve.py`"，其余体验尽量保持一致。
 是 Flutter 端的"参照实现"：先用 Python 把 CS 链路跑通、把 HTTP 契约固定下来。
 
 ```
@@ -13,7 +13,7 @@
 先在 PC 上启动服务端（工程根目录）：
 
 ```bash
-python serve.py            # 监听 0.0.0.0:8000
+python server_py/serve.py            # 监听 0.0.0.0:8000
 ```
 
 再开客户端（默认连 `127.0.0.1:8000`）：
@@ -26,14 +26,14 @@ python -m client_py --server http://192.168.1.5:8000   # 指向局域网服务�
 python -m client_py --token <密钥> "你好"     # 服务端开了 Bearer 鉴权时带上
 ```
 
-批量回归（对标根目录 `run_cases.py`，逐条跑全部 demo 用例）：
+批量回归（对标 `server_py/run_cases.py`，逐条跑全部 demo 用例）：
 
 ```bash
 python -m client_py.run_cases
 python -m client_py.run_cases --server http://192.168.1.5:8000
 ```
 
-## 与单机版（chat_app.py / run_cases.py）的差别
+## 与单机版（server_py/chat_app.py / run_cases.py）的差别
 
 只有两点，都是 CS 架构的必然：
 
@@ -54,12 +54,12 @@ python -m client_py.run_cases --server http://192.168.1.5:8000
 | 会话 id | `--session` | `CLIENT_SESSION_ID` | 随机生成 |
 | 平台账号 | — | `CLIENT_USER_ID` | `mock-user` |
 
-## 分层（与 server/ 对称）
+## 分层（与 server_py/server/ 对称）
 
 ```
 client_py/
   config.py     客户端配置（地址/鉴权/位置/session_id）
   client.py     ServerClient：唯一懂 HTTP 契约的地方（health / chat）
-  app.py        交互式 / 单轮 CLI，复用 ui.TerminalPresenter（同款聊天气泡）
-  run_cases.py  批量回归，对标根目录 run_cases.py
+  app.py        交互式 / 单轮 CLI，复用 ui_py.TerminalPresenter（同款聊天气泡）
+  run_cases.py  批量回归，对标 server_py/run_cases.py
 ```

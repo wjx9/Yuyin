@@ -1,12 +1,38 @@
-# TripNow Engine Python 接入客户端
+# moasm_vui_poc — 多能力语音对话助手（client-server PoC）
 
-对 [TripNow Engine](https://tripnowengine.133.cn)（航班管家行程引擎）的 Python 封装。
-把"**两种接入方式**"与"**公开 / 个人信息操作**"拆成正交的两层，命令行优先，
-但分层设计使其易于迁移到 GUI、服务端或其他语言。
+> **一句话**：把"出行 / 快递 / 地图 / 新闻 / 闲聊…"多个第三方能力，用一层
+> **Gemini 意图分流**编排成**单一对话入口**；再拆成 **PC 服务端（大脑）+ 客户端**的
+> client-server 架构，客户端含 **Python 终端版**与 **Flutter 语音版**
+> （VUI：按麦克风说话 → 端侧识别 → 发请求 → 朗读回复）。
+>
+> 本仓库是 **PoC**（`moasm_vui` = 把第三方能力接入下一代语音助手的可行性验证）。
+> **TripNow（航班管家行程引擎）只是接入的第一个 provider，并非项目本身**——
+> 历史原因下文 §1–§7 仍以它为最完整的接入样板讲解，**§8 才是项目核心（多能力分流）**。
+
+## 0. 项目结构：3 个部署单元 + 1 个共享层
+
+| 顶层目录 | 角色 | 一句话 |
+|---|---|---|
+| **`server_py/`** | 后端引擎（大脑） | 多能力分流 + HTTP 服务端；`serve.py` 启动，所有 provider 与路由都在这。详见 §8 |
+| **`client_py/`** | Python 终端客户端 | HTTP 连 `serve.py` 的参照实现，先把 CS 链路与契约跑通。见 `client_py/README.md` |
+| **`client_flutter/`** | Flutter 手机客户端 | 语音版：端侧 ASR 转文字 → `POST /chat` → TTS 朗读。见 `client_flutter/README.md` |
+| **`ui_py/`** | 共享呈现层（Python） | `server_py`(chat_app) 与 `client_py` 共用的终端聊天气泡，故置于根级（见 §8.9） |
+
+> **命名约定**：Python 单元统一带 `_py` 后缀（`server_py` / `client_py` / `ui_py`），
+> 与 `client_flutter` 在多语言、多端部署的仓库里一眼区分语言/平台。
+
+**两种运行形态**：
+- **单机直连**（无网络、最快上手）：`python server_py/chat_app.py` —— 进程内直接调 `Dispatcher`。
+- **client-server**：`python server_py/serve.py` 起服务端，再用 `client_py` 或 `client_flutter` 连（见 §8.10）。
+
+完整目录树见 §5。
 
 ---
 
-## 1. 本质功能
+## 1. TripNow provider · 本质功能（接入样板）
+
+> 注：本节及 §2–§7 讲的是 **TripNow 这一个 provider** 的接入细节——它是仓库里最完整的
+> provider 实现，可作"如何接一个第三方能力"的参考样板。能力分流的全局视角请直接看 §8。
 
 TripNow Engine 对外只有一个核心能力：**OpenAI 兼容的对话补全**
 （`chat/completions`）。所有出行场景都通过自然语言 query 触发，引擎内部自行选择
@@ -25,7 +51,7 @@ TripNow Engine 对外只有一个核心能力：**OpenAI 兼容的对话补全**
 
 ---
 
-## 2. 架构设计
+## 2. TripNow provider · 架构设计
 
 ### 2.1 分层
 
@@ -151,7 +177,7 @@ from tripnow_client import extract_union_id
 union_id = extract_union_id("https://官网?union_id=xxxx&...")
 ```
 
-测试账号（郑炜雄）union_id：见 `init_docs` 文档。
+测试账号（郑炜雄）union_id：见 `server_py/tripnow_client/init_docs/` 文档。
 
 ---
 
@@ -163,9 +189,7 @@ moasm_vui_poc/                  # 仓库根（.git 在此）
 ├── requirements.txt / requirements-dev.txt
 ├── pytest.ini                  # testpaths=server_py/tests；pythonpath=. server_py
 ├── .env.example                # 配置模板（复制为 .env）
-├── init_docs/                  # 官方接入文档（PDF/DOCX/PNG）
-│
-├── ui/                         # 共享呈现层（server_py 与 client_py 复用，故置于根，见 §8.9）
+├── ui_py/                      # 共享呈现层(Python)：server_py 与 client_py 复用，故置于根（见 §8.9）
 │   ├── presenter.py            # Presenter 抽象 + PlainPresenter 兜底
 │   ├── terminal.py             # TerminalPresenter（聊天气泡风格）
 │   └── layout.py               # CJK 宽度/折行/画框（无副作用纯函数）
@@ -181,11 +205,12 @@ moasm_vui_poc/                  # 仓库根（.git 在此）
 │   │   ├── errors.py           # 统一异常体系
 │   │   ├── cli.py              # 命令行表现层
 │   │   ├── transport/          # 传输层：base(抽象+PromptsCapable) / openapi(REST+SSE) / mcp(JSON-RPC)
-│   │   └── services/           # 业务层：public(无 union_id) / personal(带 union_id) / oauth
+│   │   ├── services/           # 业务层：public(无 union_id) / personal(带 union_id) / oauth
+│   │   └── init_docs/          # TripNow 官方接入文档（PDF/DOCX/PNG）——随其 provider
 │   ├── kuaidi100_client/       # provider：快递查询（MD5 签名 REST）
 │   ├── amap_client/            # provider：高德地图（REST 默认 / A2A 可切，见 §8.8）
 │   ├── tencent_news_client/    # provider：腾讯新闻（官方 Skill/CLI 子进程封装）
-│   ├── music163/               # provider：网易云音乐
+│   ├── music163/               # provider 占位：网易云音乐（暂仅 docs/，未接入 routing）
 │   ├── routing/                # 顶层编排（分流）层，依赖各 provider
 │   │   ├── handler.py          # Handler(ABC) / RouteContext / RouteResult / IntentSpec
 │   │   ├── classifier.py       # GeminiClassifier + KeywordClassifier 兜底
@@ -197,7 +222,7 @@ moasm_vui_poc/                  # 仓库根（.git 在此）
 │   │   ├── service.py / session.py / auth.py(mock凭证) / schemas.py / http_server.py
 │   └── tests/                  # pytest（129 用例，网络/子进程全 mock）
 │
-├── client_py/                  # Python 终端客户端（HTTP 连 server_py，复用根级 ui/）
+├── client_py/                  # Python 终端客户端（HTTP 连 server_py，复用根级 ui_py/）
 └── client_flutter/             # Flutter 客户端（手机端）
 ```
 
@@ -405,14 +430,14 @@ REST 后端的自然语言理解靠注入的 `QueryParser`（接口在 `amap_cli
 
 ### 8.9 呈现层（UI）与分流层解耦
 
-输出样式独立成 `ui/` 包，与 routing/业务层解耦：routing 只产出 `RouteResult`，"长什么样"
-由呈现层决定。换 UI（更花哨的 TUI、未来的 GUI/Web）= 新增一个实现 `Presenter` 接口的类，
-分流与业务代码零改动。
+输出样式独立成根级 `ui_py/` 包（Python 共享层，`server_py` 的 chat_app 与 `client_py` 都复用它），
+与 routing/业务层解耦：routing 只产出 `RouteResult`，"长什么样"由呈现层决定。换 UI（更花哨的
+TUI、未来的 GUI/Web）= 新增一个实现 `Presenter` 接口的类，分流与业务代码零改动。
 
-- `ui/presenter.py`：`Presenter` 抽象接口（`banner` / `info` / `show_input` / `show_output`
+- `ui_py/presenter.py`：`Presenter` 抽象接口（`banner` / `info` / `show_input` / `show_output`
   / `log_formatter`）；含一个朴素的 `PlainPresenter` 兜底实现。
-- `ui/terminal.py`：`TerminalPresenter`，聊天气泡风格（左/右对齐、ANSI 上色、Windows 自动启用 VT）。
-- `ui/layout.py`：CJK 宽度、按显示宽度折行、画框，均为无副作用纯函数（已单测）。
+- `ui_py/terminal.py`：`TerminalPresenter`，聊天气泡风格（左/右对齐、ANSI 上色、Windows 自动启用 VT）。
+- `ui_py/layout.py`：CJK 宽度、按显示宽度折行、画框，均为无副作用纯函数（已单测）。
 - 入口 `chat_app.py` 只依赖 `Presenter` 接口，不关心具体实现。
 - **日志区**：路由调试日志由 `logging` 在 dispatch() 内实时打印，时间上正好落在 `show_input`
   与 `show_output` 之间；`Presenter.log_formatter()` 决定其样式（缩进+变暗），`setup_logging`
@@ -507,13 +532,19 @@ pip install pyinstaller
 mkdir -p _build_env && cp .env _build_env/.env
 
 # 2) 在项目根目录执行（Windows）
+#    tencent-news-cli.exe 现为 .gitignore 的构建产物（不在仓库内），打包前需自行把官方
+#    原生二进制放到项目根（安装见 §8.7）；产物 dist/ 与 *.spec 同样不入库。
 python -m PyInstaller --onefile --name tripnow-chat \
+  --paths . --paths server_py \
   --add-binary "tencent-news-cli.exe;." \
   --add-data "_build_env/.env;." \
-  --clean -y chat_app.py
+  --clean -y server_py/chat_app.py
 ```
 
 - `--onefile`：打成单文件，方便分发
+- `--paths . --paths server_py`：目录重构后，根级 `ui_py` 与 `server_py/` 下各包需显式加入
+  PyInstaller 的分析路径（运行时 `chat_app.py` 会自行把根目录加进 `sys.path`，但**打包期的
+  依赖收集是静态分析**，跟不进运行时的 path 注入，故必须在此显式给出）。
 - `--add-binary "tencent-news-cli.exe;."`：把腾讯官方原生二进制打进包内（`;` 左边是源文件、
   右边 `.` 是包内目标目录）。运行时 `tencent_news_client/config.py` 会自动从解包目录
   (`_MEIPASS`) 或 exe 同级目录找到它，无需 PATH 或额外安装
@@ -530,7 +561,7 @@ python -m PyInstaller --onefile --name tripnow-chat \
 
 ### 10.2 exe 用法
 
-和源码版 `chat_app.py` 完全一致：
+和源码版 `server_py/chat_app.py` 完全一致：
 
 ```bash
 tripnow-chat.exe                         # 连续对话循环（默认；多轮，记忆最近 30 轮）
