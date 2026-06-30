@@ -1,6 +1,6 @@
 """交互式 / 单轮 CLI —— 对标 chat_app.py，但把"本地 Dispatcher"换成"HTTP 远端"。
 
-刻意复用 ui.TerminalPresenter（同一套聊天气泡），让 CS 版与单机版"看起来一样"。
+刻意复用 ui_py.TerminalPresenter（同一套聊天气泡），让 CS 版与单机版"看起来一样"。
 差别只有两点，都是 CS 架构的必然：
   1. 多轮历史在服务端按 session_id 维护，客户端只固定带同一个 session_id；
   2. 路由调试日志在服务端打，客户端中间不再有"夹在输入输出之间的日志区"。
@@ -34,7 +34,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from ui import TerminalPresenter
+from ui_py import TerminalPresenter
 
 _EPILOG = """\
 示例：

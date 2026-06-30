@@ -22,7 +22,7 @@ import os
 import sys
 
 # 本文件在 server_py/ 下：运行时脚本目录(server_py)自动入 sys.path，故 import routing 等可用；
-# 但共享模块 ui 在项目根，需把根目录也加入 sys.path 才能 import ui。
+# 但共享模块 ui_py 在项目根，需把根目录也加入 sys.path 才能 import ui_py。
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -63,7 +63,7 @@ def _load_env() -> None:
 _load_env()
 
 from routing import RouteContext, SessionHistory, build_dispatcher, setup_logging
-from ui import Presenter, TerminalPresenter
+from ui_py import Presenter, TerminalPresenter
 
 _EPILOG = """\
 示例：

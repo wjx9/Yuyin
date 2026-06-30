@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ui.layout import display_width, render_box, wrap
+from ui_py.layout import display_width, render_box, wrap
 
 
 def test_display_width_counts_cjk_as_two():
