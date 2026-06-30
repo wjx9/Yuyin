@@ -13,27 +13,38 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 
 _ROOT = "routing"
-_configured = False
+_configured: set[str] = set()  # 已安装过 handler 的命名空间
 
 
-def setup_logging(level: str | None = None, formatter: logging.Formatter | None = None) -> None:
-    """配置 routing 日志。level 省略时读环境变量 ROUTING_LOG_LEVEL（默认 WARNING）。
+def setup_logging(
+    level: str | None = None,
+    formatter: logging.Formatter | None = None,
+    namespaces: Iterable[str] = (_ROOT,),
+) -> None:
+    """配置日志。level 省略时读环境变量 ROUTING_LOG_LEVEL（默认 WARNING）。
 
     formatter 可选：由呈现层（presentation）传入，决定日志怎么显示（如缩进/变暗），
     "日志长什么样"属于 UI 关注点，这里只负责"打不打、打什么内容"。省略则用默认格式。
 
-    幂等：多次调用只生效第一次的 handler 安装，level 仍可被后续调用调整。
-    """
-    global _configured
-    resolved = (level or os.getenv("ROUTING_LOG_LEVEL", "WARNING")).upper()
-    logger = logging.getLogger(_ROOT)
-    logger.setLevel(getattr(logging, resolved, logging.WARNING))
+    namespaces：要配置的 logger 命名空间，默认仅 "routing"；其它入口（如服务端）
+    可传入自己的命名空间（如 "server"）以共用同一套开关与格式，本函数对命名空间无感。
 
-    if not _configured:
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter or logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
-        logger.addHandler(handler)
-        logger.propagate = False  # 避免重复打印到 root
-        _configured = True
+    幂等：每个命名空间的 handler 只安装一次，level 仍可被后续调用调整。
+    """
+    resolved = (level or os.getenv("ROUTING_LOG_LEVEL", "WARNING")).upper()
+    lvl = getattr(logging, resolved, logging.WARNING)
+
+    for ns in namespaces:
+        logger = logging.getLogger(ns)
+        logger.setLevel(lvl)
+        if ns not in _configured:
+            handler = logging.StreamHandler()
+            handler.setFormatter(
+                formatter or logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+            )
+            logger.addHandler(handler)
+            logger.propagate = False  # 避免重复打印到 root
+            _configured.add(ns)

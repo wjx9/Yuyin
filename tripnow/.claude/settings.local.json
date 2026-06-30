@@ -11,7 +11,12 @@
       "Bash(.venv/Scripts/python.exe -m pytest -q)",
       "Bash(env)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m pytest -q)",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \":*)"
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \":*)",
+      "Bash(python -m pytest tests/test_server.py -q)",
+      "Read(//tmp/**)",
+      "Bash(python -c \"import urllib.request,json; print\\(json.loads\\(urllib.request.urlopen\\(''http://127.0.0.1:8765/health'',timeout=5\\).read\\(\\)\\)\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(1 echo:*)"
     ]
   }
 }

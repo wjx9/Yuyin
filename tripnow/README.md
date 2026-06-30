@@ -180,8 +180,9 @@ tripnow/
 │       └── oauth.py            # union_id 解析辅助
 ├── kuaidi100_client/           # provider：快递查询（MD5 签名 REST）
 │   ├── client.py / service.py / models.py / errors.py / config.py
-├── amap_client/                # provider：高德地图（Google A2A 协议）
-│   ├── client.py / service.py / models.py / errors.py / config.py
+├── amap_client/                # provider：高德地图（REST 默认 / A2A 可切，见 §8.8）
+│   ├── service.py(ABC+A2A) / rest_service.py / rest_client.py / client.py(A2A)
+│   ├── parser.py(QueryParser) / models.py / errors.py / config.py
 ├── tencent_news_client/        # provider：腾讯新闻（官方 Skill/CLI 子进程封装）
 │   ├── client.py / service.py / models.py / errors.py / config.py
 ├── routing/                    # 顶层编排（分流）层，依赖各 provider
@@ -193,10 +194,14 @@ tripnow/
 │   └── handlers/               # 各 provider 的薄适配器
 │       ├── tripnow.py          # tripnow_public / tripnow_personal
 │       ├── kuaidi100.py        # express_tracking
-│       ├── amap.py             # amap
+│       ├── amap.py             # amap + GeminiMapQueryParser（REST 后端查询解析）
 │       ├── tencent_news.py     # tencent_hot_news / tencent_weather（search/fact_check 已下线，类保留）
 │       └── chitchat.py         # chitchat（默认兜底，走 Gemini）
-└── tests/                      # pytest（75 用例，网络/子进程全 mock）
+├── server/                     # client-server 模式（加法，不动现有 demo，见 §8.10）
+│   ├── service.py / session.py / auth.py(mock凭证) / schemas.py / http_server.py
+├── chat_app.py                 # 入口①：本地 CLI（交互/单轮）
+├── serve.py                    # 入口②：HTTP 服务端（复用同一 Dispatcher）
+└── tests/                      # pytest（129 用例，网络/子进程全 mock）
 ```
 
 ---
@@ -416,19 +421,72 @@ REST 后端的自然语言理解靠注入的 `QueryParser`（接口在 `amap_cli
   与 `show_output` 之间；`Presenter.log_formatter()` 决定其样式（缩进+变暗），`setup_logging`
   接收该 formatter——"日志打不打"是 routing 的事，"长什么样"是 UI 的事。
 
+### 8.10 client-server 模式（PC 当服务端，手机当客户端）
+
+在**不改动现有 demo**（routing / ui / 各 provider / chat_app）的前提下新增的运行模式：
+给同一个 `Dispatcher`（业务"大脑"）套一层服务端适配器。`chat_app.py` 与 `serve.py`
+是两个平级入口，复用同一套 `build_dispatcher()`。
+
+```bash
+python serve.py                 # 监听 0.0.0.0:8000，同一 WiFi 下手机可访问
+python serve.py --port 9000 --debug
+python serve.py --token <密钥>   # 开启 Bearer 鉴权（公网/阿里云建议开）
+```
+
+启动后控制台会打印**局域网地址**（如 `http://192.168.x.x:8000`），手机填这个即可。
+
+**HTTP 契约**
+
+```
+GET  /health  ->  { "status": "ok", "capabilities": ["chitchat", "amap", ...] }
+POST /chat
+  请求体: { "query": "深圳万科云城附近好吃的", "session_id": "<客户端生成并固定>",
+           "user_id": "可选，我方平台账号", "location": "经度,纬度 可选" }
+  响应  : { "text": "...", "intent": "amap", "session_id": "..." }
+  鉴权(可选): 请求头 Authorization: Bearer <SERVER_AUTH_TOKEN>
+```
+
+phase 1 只下发 `text + intent`，结构化 `RouteResult.data`（POI/轨迹等）暂不序列化。
+
+**分层（`server/` 包，全部是加法）**
+
+| 文件 | 职责 |
+|---|---|
+| `server/service.py` | `ChatService`：框架无关核心，复用 `build_dispatcher()`；取凭证 → 注入会话历史 → dispatch → 记历史 |
+| `server/session.py` | `SessionStore`：每个 `session_id` 一份独立历史（纯内存、互不干扰），配 per-session 锁串行化同会话并发 |
+| `server/auth.py` | 三方个人数据凭证的获取（见下） |
+| `server/schemas.py` | 请求/响应数据契约 + 校验 |
+| `server/http_server.py` | 标准库 `ThreadingHTTPServer` 适配器；迁阿里云若要异步/流式可整体换 FastAPI，core 不动 |
+| `serve.py` | 启动入口 |
+
+**鉴权（当前 mock，已预留接真鉴权的接口）**
+
+抽象：客户端引导用户去三方 OAuth 登录 → 三方回 key/token → 我方按"平台用户账号"把 token
+存云端 → 需要时按账号查出来 → 用它访问该用户的三方个人数据。这套对几乎所有三方通用，
+当前整体 mock：
+
+- `CredentialProvider`（接口）→ `MockCredentialProvider`（假装已授权，复用 CLI 同款测试账号
+  `TRIPNOW_UNION_ID` 作为"拿到的 key"）。mock 执行时打日志 `[我们mock了鉴权过程, 假装拿到了key]`。
+- 将来接真鉴权 = 新增 `CloudCredentialProvider`（按 `user_id` 去存储查真实 token），
+  `ChatService` 只依赖 `CredentialProvider` 接口，无需改动。
+
+**迁阿里云的后续项**（你给地址后）：强制开 `SERVER_AUTH_TOKEN` + nginx/HTTPS；
+provider 的 `requests.Session` 在高并发下的连接池；dispatch 阻塞较久（单轮数秒），
+可评估流式输出。
+
 ---
 
 ## 9. 测试（pytest）
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 全量 102 个用例，全部 mock 掉网络/子进程
+python -m pytest -q          # 全量 129 个用例，全部 mock 掉网络/子进程
 ```
 
-覆盖：模型解析、公开/个人业务层、两种传输、配置；快递签名/识别、高德 A2A
-多种返回结构；分流层的关键词/Gemini 分类、分发器、各 Handler（含降级路径）；
-UI 布局纯函数（宽度/折行/画框）；
-会话记忆滑动窗口/落盘往返/容错。
+覆盖：模型解析、公开/个人业务层、两种传输、配置；快递签名/识别、高德 A2A 与
+REST 两后端（含查询解析/地点定位）；分流层的关键词/Gemini 分类、分发器、各 Handler（含降级路径）；
+UI 布局纯函数（宽度/折行/画框）；会话记忆滑动窗口/落盘往返/容错；
+服务端 ChatService/会话隔离/schema 校验/HTTP 适配器（真起本地 server，含鉴权）。
 - **API Key 安全**：放 `.env`，不要提交到版本库（已建议加入 `.gitignore`）。
 
 **批量回归 demo**（会发起真实网络调用，需 `.env` 配好各 key）：
