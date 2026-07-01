@@ -96,6 +96,35 @@ def test_service_response_shape():
     svc = _service()
     resp = svc.handle_chat(ChatRequest(query="你好", session_id="s1"))
     assert resp.text == "回复:你好" and resp.intent == "chitchat" and resp.session_id == "s1"
+    assert resp.data is None and "data" not in resp.to_dict()  # 无结构化 data 时不下发
+
+
+def test_service_passes_through_dict_data():
+    """音乐等产出可序列化 dict 的 handler：data 透传给客户端（含 orpheus 深链，step 3.1）。"""
+
+    class MusicDisp(FakeDispatcher):
+        def dispatch(self, query, context):
+            self.calls.append({"query": query, "context": context})
+            return RouteResult(
+                text="正在播放：晴天", intent="music_play",
+                data={"kind": "music", "deeplink": "orpheus://song/123"},
+            )
+
+    resp = _service(MusicDisp()).handle_chat(ChatRequest(query="放晴天", session_id="s1"))
+    assert resp.data == {"kind": "music", "deeplink": "orpheus://song/123"}
+    assert resp.to_dict()["data"]["deeplink"] == "orpheus://song/123"
+
+
+def test_service_drops_non_dict_data():
+    """富对象（NewsResult 等）非 dict：不下发，保持 phase-1 行为。"""
+
+    class ObjDisp(FakeDispatcher):
+        def dispatch(self, query, context):
+            self.calls.append({"query": query, "context": context})
+            return RouteResult(text="x", intent="news", data=object())
+
+    resp = _service(ObjDisp()).handle_chat(ChatRequest(query="x", session_id="s1"))
+    assert resp.data is None and "data" not in resp.to_dict()
 
 
 def test_real_auth_provider_seam():

@@ -232,7 +232,18 @@ def test_play_handler_plays_when_logged_in():
     cli = FakeCli({"login": {"success": True}, "search": _SEARCH_JSON})
     res = MusicPlayHandler(MusicService(cli)).handle("放一首七里香", _ctx())
     assert res.text.startswith("正在播放：七里香")
-    assert isinstance(res.data, Song)
+    # data 是可序列化 dict（供 CS 回传客户端拉起 app），含 orpheus 深链
+    assert res.data["kind"] == "music"
+    assert res.data["name"] == "七里香"
+    assert res.data["deeplink"] == "orpheus://song/1"  # _SEARCH_JSON 首歌 originalId=1
+
+
+def test_song_deeplink_and_client_dict():
+    s = Song(name="七里香", artists=["周杰伦"], encrypted_id="A" * 32, original_id="123")
+    assert s.deeplink == "orpheus://song/123"
+    assert s.web_url.endswith("id=123")
+    d = s.to_client_dict()
+    assert d["kind"] == "music" and d["originalId"] == "123" and d["deeplink"] == "orpheus://song/123"
 
 
 def test_play_handler_maps_error_to_text():

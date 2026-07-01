@@ -56,4 +56,8 @@ class ChatService:
             result = self._dispatcher.dispatch(req.query, context)
             hist.append(req.query, result.text)
 
-        return ChatResponse(text=result.text, intent=result.intent, session_id=req.session_id)
+        # 只下发可序列化的 dict 型 data（如音乐深链）；富对象（NewsResult 等）保持不下发。
+        data = result.data if isinstance(result.data, dict) else None
+        return ChatResponse(
+            text=result.text, intent=result.intent, session_id=req.session_id, data=data
+        )

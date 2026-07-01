@@ -34,6 +34,28 @@ class Song:
     def label(self) -> str:
         return f"{self.name} - {self.artist_str}"
 
+    @property
+    def deeplink(self) -> str:
+        """网易云音乐 app 的 URL scheme，用 originalId（明文数字）。客户端用它拉起 app。"""
+        return f"orpheus://song/{self.original_id}" if self.original_id else ""
+
+    @property
+    def web_url(self) -> str:
+        """网页兜底（app 未安装时）。"""
+        return f"https://music.163.com/#/song?id={self.original_id}" if self.original_id else ""
+
+    def to_client_dict(self) -> dict:
+        """回传给客户端（CS 模式）的可序列化结构：含 app 深链与网页兜底，供端侧拉起播放。"""
+        return {
+            "kind": "music",
+            "name": self.name,
+            "artist": self.artist_str,
+            "originalId": self.original_id,
+            "encryptedId": self.encrypted_id,
+            "deeplink": self.deeplink,
+            "webUrl": self.web_url,
+        }
+
 
 def parse_songs(payload: Any) -> list[Song]:
     """从 search 的 JSON 信封里取出歌曲列表，构造 Song（保持出现顺序）。

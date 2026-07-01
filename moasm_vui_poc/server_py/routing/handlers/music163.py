@@ -52,7 +52,8 @@ class MusicPlayHandler(Handler):
             song = self._service.play_first(keyword, user_input=query)
         except Music163Error as e:
             return RouteResult(text=f"点歌失败：{e}", intent=self.intent)
-        return RouteResult(text=f"正在播放：{song.label()}", data=song, intent=self.intent)
+        # data 用可序列化 dict（含 orpheus 深链）：CS 模式下回传客户端，供端侧拉起网易云 app（step 3.1）
+        return RouteResult(text=f"正在播放：{song.label()}", data=song.to_client_dict(), intent=self.intent)
 
 
 # 控制意图：关键词 → service 方法名（无参动作）
