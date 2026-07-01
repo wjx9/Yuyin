@@ -40,6 +40,7 @@ dependencies:
   shared_preferences: ^2.5.5
   provider: ^6.1.5+1
   uuid: ^4.5.3
+  url_launcher: ^6.3.0 # step 3.1：用 orpheus:// 深链拉起网易云音乐 app
 
 dev_dependencies:
   flutter_test:

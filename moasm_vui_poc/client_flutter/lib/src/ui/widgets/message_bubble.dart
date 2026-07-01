@@ -5,7 +5,11 @@ import '../../data/models.dart';
 /// 一条聊天气泡：用户靠右(蓝)、助手靠左(浅灰)、系统居中(提示)。
 class MessageBubble extends StatelessWidget {
   final ChatTurn turn;
-  const MessageBubble({super.key, required this.turn});
+
+  /// 音乐气泡「用网易云音乐打开」按钮的回调（step 3.1）。
+  final void Function(MusicInfo music)? onOpenMusic;
+
+  const MessageBubble({super.key, required this.turn, this.onOpenMusic});
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +86,19 @@ class MessageBubble extends StatelessWidget {
               )
             else
               SelectableText(turn.text, style: TextStyle(color: fg, height: 1.35)),
+            if (turn.music != null && onOpenMusic != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: FilledButton.tonalIcon(
+                  onPressed: () => onOpenMusic!(turn.music!),
+                  icon: const Icon(Icons.music_note, size: 18),
+                  label: const Text('用网易云音乐打开'),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

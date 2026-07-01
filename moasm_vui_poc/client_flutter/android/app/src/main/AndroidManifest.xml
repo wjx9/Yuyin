@@ -50,5 +50,14 @@
         <intent>
             <action android:name="android.speech.RecognitionService"/>
         </intent>
+        <!-- step 3.1：url_launcher 要拉起网易云音乐 app 的 orpheus:// 深链 + 网页兜底 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="orpheus"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
     </queries>
 </manifest>

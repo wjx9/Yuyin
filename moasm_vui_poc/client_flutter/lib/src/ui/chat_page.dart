@@ -92,7 +92,10 @@ class _ChatPageState extends State<ChatPage> {
                     controller: _scroll,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     itemCount: c.messages.length,
-                    itemBuilder: (_, i) => MessageBubble(turn: c.messages[i]),
+                    itemBuilder: (_, i) => MessageBubble(
+                      turn: c.messages[i],
+                      onOpenMusic: c.openMusic,
+                    ),
                   ),
           ),
           if (c.status == AssistantStatus.listening) _partialBar(context, c),

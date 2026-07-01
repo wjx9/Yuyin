@@ -4,6 +4,41 @@ library;
 /// 一条聊天气泡的来源。
 enum Sender { user, assistant, system }
 
+/// music_play 命中时，服务端在 data 里回传的可播放信息（step 3.1：端侧拉起网易云 app）。
+///
+/// 服务端 data 形如：
+///   {"kind":"music","name":"晴天","artist":"周杰伦",
+///    "deeplink":"orpheus://song/{id}","webUrl":"https://music.163.com/#/song?id={id}"}
+class MusicInfo {
+  final String name;
+  final String artist;
+  final String deeplink; // 网易云 app 的 URL scheme（首选）
+  final String webUrl; // 网页兜底（app 未安装时）
+
+  const MusicInfo({
+    required this.name,
+    required this.artist,
+    required this.deeplink,
+    required this.webUrl,
+  });
+
+  String get label => artist.isEmpty ? name : '$name - $artist';
+
+  /// 从 /chat 响应的 data 段解析；非音乐或无深链则返回 null。
+  static MusicInfo? tryFrom(Object? data) {
+    if (data is! Map || data['kind'] != 'music') return null;
+    final deeplink = (data['deeplink'] ?? '') as String;
+    final webUrl = (data['webUrl'] ?? '') as String;
+    if (deeplink.isEmpty && webUrl.isEmpty) return null;
+    return MusicInfo(
+      name: (data['name'] ?? '') as String,
+      artist: (data['artist'] ?? '') as String,
+      deeplink: deeplink,
+      webUrl: webUrl,
+    );
+  }
+}
+
 /// UI 层一条消息（聊天气泡）。assistant 在等服务端时先放一条 pending 占位。
 class ChatTurn {
   final Sender sender;
@@ -18,38 +53,51 @@ class ChatTurn {
   /// 标记错误气泡，UI 可用不同配色。
   final bool isError;
 
+  /// 仅 assistant 且命中 music_play：可播放信息，气泡上给「用网易云音乐打开」按钮。
+  final MusicInfo? music;
+
   const ChatTurn({
     required this.sender,
     required this.text,
     this.intent,
     this.pending = false,
     this.isError = false,
+    this.music,
   });
 
-  ChatTurn copyWith({String? text, String? intent, bool? pending, bool? isError}) {
+  ChatTurn copyWith({String? text, String? intent, bool? pending, bool? isError, MusicInfo? music}) {
     return ChatTurn(
       sender: sender,
       text: text ?? this.text,
       intent: intent ?? this.intent,
       pending: pending ?? this.pending,
       isError: isError ?? this.isError,
+      music: music ?? this.music,
     );
   }
 }
 
-/// POST /chat 的响应：{ text, intent, session_id }。
+/// POST /chat 的响应：{ text, intent, session_id, data? }。
+/// data 目前仅音乐能力下发（供端侧拉起 app）；其余能力为 null。
 class ChatReply {
   final String text;
   final String intent;
   final String sessionId;
+  final MusicInfo? music;
 
-  const ChatReply({required this.text, required this.intent, required this.sessionId});
+  const ChatReply({
+    required this.text,
+    required this.intent,
+    required this.sessionId,
+    this.music,
+  });
 
   factory ChatReply.fromJson(Map<String, dynamic> json) {
     return ChatReply(
       text: (json['text'] ?? '') as String,
       intent: (json['intent'] ?? '') as String,
       sessionId: (json['session_id'] ?? '') as String,
+      music: MusicInfo.tryFrom(json['data']),
     );
   }
 }

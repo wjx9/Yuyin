@@ -7,7 +7,10 @@
 /// 类比 Android：ChangeNotifier ≈ ViewModel + LiveData；UI 监听本类的状态重绘。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../data/chat_api.dart';
 import '../data/models.dart';
@@ -141,10 +144,15 @@ class ChatController extends ChangeNotifier {
         sender: Sender.assistant,
         text: reply.text,
         intent: reply.intent,
+        music: reply.music,
       );
       connectionError = null;
       status = AssistantStatus.speaking;
       notifyListeners();
+
+      // step 3.1：命中点歌 → 拉起网易云音乐 app 播放（在线播放不在服务端本机，跳转到官方 app）。
+      // 不 await，避免跳转卡住本轮；气泡上也留了按钮可手动重开。
+      if (reply.music != null) unawaited(openMusic(reply.music!));
 
       await tts.speak(reply.text); // awaitSpeakCompletion=true，播完才返回
     } on ApiException catch (e) {
@@ -157,6 +165,19 @@ class ChatController extends ChangeNotifier {
       status = AssistantStatus.idle;
       notifyListeners();
     }
+  }
+
+  /// step 3.1：优先用 orpheus:// 深链拉起网易云音乐 app；失败则退到网页；再不行给提示。
+  Future<void> openMusic(MusicInfo music) async {
+    for (final url in [music.deeplink, music.webUrl]) {
+      if (url.isEmpty) continue;
+      try {
+        if (await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)) return;
+      } catch (_) {
+        // 换下一个 url 兜底
+      }
+    }
+    _pushSystem('没能拉起网易云音乐，请确认已安装该 app（或稍后重试）。', isError: true);
   }
 
   /// 用户主动打断当前朗读。
