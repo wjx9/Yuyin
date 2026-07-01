@@ -12,24 +12,41 @@ from .service import MusicService
 _DEFAULT_CLI = "ncm-cli"
 
 
+def _win_node_entry() -> str:
+    """Windows: 定位 npm 全局里 @music163/ncm-cli 的 dist/index.js（用 node 直跑，绕开 .cmd 垫片）。"""
+    appdata = os.getenv("APPDATA", "")
+    if not appdata:
+        return ""
+    entry = os.path.join(
+        appdata, "npm", "node_modules", "@music163", "ncm-cli", "dist", "index.js"
+    )
+    return entry if os.path.isfile(entry) else ""
+
+
 def _resolve_cli_command() -> str:
     """决定怎么拉起 ncm-cli：
 
     显式 MUSIC163_CLI > Windows 下用 `node <dist/index.js>`（绕开 .cmd 垫片）> PATH 上的 ncm-cli。
 
-    Windows 上 npm 全局入口是 ncm-cli.cmd，Python subprocess(不走 shell)执行不了，
-    故定位 npm 全局里的 dist/index.js 用 node 直跑。注意：用 shlex(posix=False) 切词，
-    路径含空格会被切坏——这种情况请显式设 MUSIC163_CLI。
+    Windows 上 npm 全局入口是 `ncm-cli`(sh 垫片) / `ncm-cli.cmd`，Python subprocess(不走 shell)
+    直接执行会 WinError 193/2。故：留空时自动定位 dist/index.js 用 node 跑；即便用户误填了
+    这个 shim 路径，也识别出来改用 node（见下）。注意 shlex(posix=False) 切词，路径含空格
+    需自己保证不被切坏（本仓库路径无空格）。
     """
     explicit = os.getenv("MUSIC163_CLI", "").strip()
     if explicit:
+        # Windows 下用户可能误填 ncm-cli 的 shim 路径（无 .js、非 "node ..."）——subprocess 执行不了。
+        # 识别到就改用 node 直跑 dist/index.js。
+        low = explicit.lower()
+        if os.name == "nt" and "index.js" not in low and not low.startswith("node "):
+            if os.path.basename(explicit.replace("\\", "/")).lower().startswith("ncm-cli"):
+                entry = _win_node_entry()
+                if entry:
+                    return f"node {entry}"
         return explicit
     if os.name == "nt":
-        appdata = os.getenv("APPDATA", "")
-        entry = os.path.join(
-            appdata, "npm", "node_modules", "@music163", "ncm-cli", "dist", "index.js"
-        )
-        if appdata and os.path.isfile(entry):
+        entry = _win_node_entry()
+        if entry:
             return f"node {entry}"
     return _DEFAULT_CLI
 
