@@ -29,29 +29,43 @@ class Dispatcher:
         self._default = default_intent
         self._specs = [h.spec() for h in handlers]
 
+    @staticmethod
+    def _visible(handler: Handler, platform: str) -> bool:
+        """该 handler 是否对指定端可见：PC-only 能力对 mobile 隐藏（不进能力清单、不参与分类）。"""
+        return not (handler.pc_only and platform == "mobile")
+
+    def intents_for(self, platform: str = "pc") -> list[str]:
+        """指定端可用的意图 id 列表（供 /health 能力清单按端过滤）。"""
+        return [i for i, h in self._handlers.items() if self._visible(h, platform)]
+
     @property
     def intents(self) -> list[str]:
-        return list(self._handlers)
+        return self.intents_for("pc")
 
     @property
     def specs(self) -> list[IntentSpec]:
-        """各能力的 (id, description)，供呈现层生成用法介绍等。"""
+        """各能力的 (id, description)，供呈现层生成用法介绍等（PC 全量）。"""
         return list(self._specs)
 
-    def classify(self, query: str) -> str:
-        return self._classifier.classify(query, self._specs, default=self._default)
+    def _specs_for(self, platform: str) -> list[IntentSpec]:
+        return [h.spec() for h in self._handlers.values() if self._visible(h, platform)]
+
+    def classify(self, query: str, platform: str = "pc") -> str:
+        return self._classifier.classify(query, self._specs_for(platform), default=self._default)
 
     def dispatch(self, query: str, context: RouteContext | None = None) -> RouteResult:
         context = context or RouteContext()
-        _log.info("收到 query: %r", query)
+        _log.info("收到 query: %r (platform=%s)", query, context.platform)
 
         t0 = time.perf_counter()
-        intent = self.classify(query)
+        intent = self.classify(query, context.platform)
         classify_ms = (time.perf_counter() - t0) * 1000
 
         handler = self._handlers.get(intent)
-        if handler is None:
-            _log.warning("意图 %r 未注册，回退默认 %r", intent, self._default)
+        # 未注册，或该端不可见（PC-only 能力被 mobile 请求命中）——都回退默认。
+        # 正常路径下分类器压根看不到隐藏能力，这里是防御性兜底（如关键词兜底分类器命中）。
+        if handler is None or not self._visible(handler, context.platform):
+            _log.warning("意图 %r 对 platform=%s 不可用，回退默认 %r", intent, context.platform, self._default)
             handler = self._handlers[self._default]
             intent = self._default
         _log.info(

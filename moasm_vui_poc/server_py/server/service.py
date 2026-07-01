@@ -34,7 +34,11 @@ class ChatService:
 
     @property
     def capabilities(self) -> list[str]:
-        return self._dispatcher.intents
+        return self.capabilities_for("pc")
+
+    def capabilities_for(self, platform: str = "pc") -> list[str]:
+        """指定端可用的能力清单（供 /health 按端过滤：移动端不含 PC-only 能力如 music_control）。"""
+        return self._dispatcher.intents_for(platform)
 
     def handle_chat(self, req: ChatRequest) -> ChatResponse:
         creds = self._credentials.resolve(req.user_id)
@@ -48,6 +52,7 @@ class ChatService:
             union_id=creds.tripnow_union_id,
             location=req.location,
             include_data=req.include_data,
+            platform=req.platform,
         )
 
         hist = self._store.get(req.session_id)

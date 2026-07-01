@@ -10,6 +10,21 @@ class BadRequest(ValueError):
     """请求体不合法（缺字段/类型错），由传输层映射成 400。"""
 
 
+_PLATFORMS = ("pc", "mobile")
+
+
+def normalize_platform(v: Any) -> str:
+    """把入参归一成受支持的 platform；缺省/空 → "pc"，未知值视为非法（400）。
+
+    /chat（请求体）与 /health（查询参数）共用此校验，保证"哪些端能看到哪些能力"只有一处判定。
+    """
+    if v is None or v == "":
+        return "pc"
+    if not isinstance(v, str) or v.strip() not in _PLATFORMS:
+        raise BadRequest(f"字段 'platform' 只能是 {' / '.join(_PLATFORMS)}")
+    return v.strip()
+
+
 def _require_str(d: dict, key: str) -> str:
     v = d.get(key)
     if not isinstance(v, str) or not v.strip():
@@ -34,6 +49,9 @@ class ChatRequest:
     session_id —— 客户端生成并固定的会话 id，服务端据此隔离多轮历史
     user_id    —— 我方平台的用户账号；将来真鉴权时用它查该用户的三方 token（现 mock）
     location   —— "经度,纬度"，供高德等基于位置的能力使用（可空）
+    platform   —— 发起端类型："pc"（chat_app / client_py）或 "mobile"（client_flutter）。
+                  据此屏蔽 PC-only 能力（如 music_control：只控服务端本机 mpv，对移动端无意义）。
+                  缺省 "pc"，即老客户端不带此字段时行为不变。
     include_data—— 是否需要结构化数据（当前服务端只回文本，预留）
     """
 
@@ -41,6 +59,7 @@ class ChatRequest:
     session_id: str
     user_id: str = "mock-user"
     location: str | None = None
+    platform: str = "pc"
     include_data: bool = True
 
     @classmethod
@@ -56,6 +75,7 @@ class ChatRequest:
             session_id=_require_str(d, "session_id"),
             user_id=user_id,
             location=_optional_str(d, "location"),
+            platform=normalize_platform(d.get("platform")),
             include_data=include_data,
         )
 

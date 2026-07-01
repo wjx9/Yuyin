@@ -18,11 +18,23 @@ from server.session import SessionStore
 
 
 class FakeDispatcher:
-    """记录每次 dispatch 收到的 query 与 context，回显固定结果。"""
+    """记录每次 dispatch 收到的 query 与 context，回显固定结果。
+
+    仿真 platform 过滤：music_control 是 PC-only，仅 pc 端可见（对应真 Dispatcher.intents_for）。
+    """
+
+    _PC_ONLY = {"music_control"}
 
     def __init__(self):
         self.calls = []
-        self.intents = ["chitchat", "amap"]
+        self._all_intents = ["chitchat", "amap", "music_control"]
+
+    def intents_for(self, platform="pc"):
+        return [i for i in self._all_intents if not (i in self._PC_ONLY and platform == "mobile")]
+
+    @property
+    def intents(self):
+        return self.intents_for("pc")
 
     def dispatch(self, query, context: RouteContext) -> RouteResult:
         self.calls.append({"query": query, "context": context})
@@ -167,12 +179,52 @@ def _post(base, path, payload, headers=None):
 def test_http_health(http_server):
     with urllib.request.urlopen(http_server + "/health", timeout=5) as r:
         body = json.loads(r.read())
+    # 不带 platform → 默认 pc → 全量能力，含 PC-only 的 music_control
     assert body["status"] == "ok" and "chitchat" in body["capabilities"]
+    assert "music_control" in body["capabilities"]
+
+
+def test_http_health_mobile_hides_pc_only(http_server):
+    with urllib.request.urlopen(http_server + "/health?platform=mobile", timeout=5) as r:
+        body = json.loads(r.read())
+    # 移动端能力清单里不该出现 PC-only 的 music_control，其余能力照常
+    assert "music_control" not in body["capabilities"]
+    assert "chitchat" in body["capabilities"]
+
+
+def test_http_health_bad_platform(http_server):
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        urllib.request.urlopen(http_server + "/health?platform=watch", timeout=5)
+    assert ei.value.code == 400
 
 
 def test_http_chat_ok(http_server):
     status, body = _post(http_server, "/chat", {"query": "你好", "session_id": "s1"})
     assert status == 200 and body["text"] == "回复:你好" and body["intent"] == "chitchat"
+
+
+def test_http_chat_platform_flows_into_context():
+    disp = FakeDispatcher()
+    svc = _service(dispatcher=disp)
+    httpd = build_http_server(svc, host="127.0.0.1", port=0)
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        _post(base, "/chat", {"query": "hi", "session_id": "s1", "platform": "mobile"})
+        assert disp.calls[-1]["context"].platform == "mobile"
+        _post(base, "/chat", {"query": "hi", "session_id": "s2"})  # 不带 → 默认 pc
+        assert disp.calls[-1]["context"].platform == "pc"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_http_chat_bad_platform(http_server):
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(http_server, "/chat", {"query": "hi", "session_id": "s1", "platform": "watch"})
+    assert ei.value.code == 400
 
 
 def test_http_chat_bad_request(http_server):

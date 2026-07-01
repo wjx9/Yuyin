@@ -134,6 +134,41 @@ def test_dispatcher_collects_intents_for_classifier():
     assert "amap" in g.last_prompt and "地图周边" in g.last_prompt
 
 
+def _pc_only_dispatcher(gemini):
+    ctrl = EchoHandler("music_control", "暂停/切歌/音量")
+    ctrl.pc_only = True
+    handlers = [EchoHandler("chitchat"), ctrl]
+    return Dispatcher(handlers, GeminiClassifier(gemini), default_intent="chitchat")
+
+
+def test_pc_only_intent_hidden_from_mobile_capabilities():
+    d = _pc_only_dispatcher(FakeGemini(reply="chitchat"))
+    assert "music_control" in d.intents_for("pc")
+    assert "music_control" not in d.intents_for("mobile")
+    assert d.intents == d.intents_for("pc")  # 默认 pc
+
+
+def test_pc_only_intent_not_offered_to_mobile_classifier():
+    g = FakeGemini(reply="chitchat")
+    _pc_only_dispatcher(g).classify("暂停", platform="mobile")
+    assert "music_control" not in g.last_prompt  # 分类器压根看不到它
+
+
+def test_mobile_dispatch_falls_back_when_classifier_forces_pc_only():
+    # 防御性兜底：即便分类器（如关键词兜底）硬命中 pc_only，mobile 请求也不落到它，回退默认
+    g = FakeGemini(reply="music_control")
+    d = _pc_only_dispatcher(g)
+    result = d.dispatch("暂停", RouteContext(platform="mobile"))
+    assert result.intent == "chitchat"
+
+
+def test_pc_dispatch_still_routes_to_pc_only():
+    g = FakeGemini(reply="music_control")
+    d = _pc_only_dispatcher(g)
+    result = d.dispatch("暂停", RouteContext(platform="pc"))
+    assert result.intent == "music_control"
+
+
 def test_dispatcher_rejects_unknown_default():
     try:
         Dispatcher([EchoHandler("a")], GeminiClassifier(FakeGemini()), default_intent="missing")

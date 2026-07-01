@@ -427,13 +427,17 @@ python server_py/serve.py --token <密钥>   # 开启 Bearer 鉴权（公网/阿
 **HTTP 契约**
 
 ```
-GET  /health  ->  { "status": "ok", "capabilities": ["chitchat", "amap", ...] }
+GET  /health[?platform=pc|mobile]
+              ->  { "status": "ok", "capabilities": ["chitchat", "amap", ...] }
 POST /chat
   请求体: { "query": "深圳万科云城附近好吃的", "session_id": "<客户端生成并固定>",
-           "user_id": "可选，我方平台账号", "location": "经度,纬度 可选" }
+           "user_id": "可选，我方平台账号", "location": "经度,纬度 可选",
+           "platform": "pc|mobile 可选，缺省 pc" }
   响应  : { "text": "...", "intent": "amap", "session_id": "..." }
   鉴权(可选): 请求头 Authorization: Bearer <SERVER_AUTH_TOKEN>
 ```
+
+`platform` 用于按端过滤能力：标了 `pc_only` 的 Handler（当前只有 `music_control`——它控的是**服务端本机 mpv**，对"点歌后用深链在手机上放"的移动端无意义）对 `mobile` 隐藏，既不进 `/health` 能力清单，`/chat` 也不会路由到它。`chat_app`（进程内）与 `client_py` 走默认 `pc`、能力不变；`client_flutter` 固定上报 `mobile`。细节见 `music163/docs/introduce.md`。
 
 phase 1 只下发 `text + intent`，结构化 `RouteResult.data`（POI/轨迹等）暂不序列化。
 

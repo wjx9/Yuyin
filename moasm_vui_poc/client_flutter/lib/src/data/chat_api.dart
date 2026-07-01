@@ -1,9 +1,13 @@
 /// ChatApi：客户端唯一懂 HTTP 契约的地方（与 client_py/client.py、server/http_server.py 对称）。
 ///
 /// 契约（README §8.10）：
-///   GET  /health -> { status, capabilities }
-///   POST /chat   { query, session_id, user_id?, location? } -> { text, intent, session_id }
+///   GET  /health?platform=mobile -> { status, capabilities }
+///   POST /chat   { query, session_id, user_id?, location?, platform } -> { text, intent, session_id }
 ///   鉴权(可选)    `Authorization: Bearer <token>`
+///
+/// 本客户端固定声明 platform=mobile：服务端据此屏蔽 PC-only 能力（如 music_control——
+/// 那是控服务端本机 mpv 的，移动端走"点歌→深链拉起网易云 app"，控制指令对它无意义）。
+/// 于是 /health 的 capabilities 不含 music_control，/chat 也永不路由到它。
 ///
 /// 上层（ChatController）只调 health()/chat()，拿到的是普通 Dart 对象，不碰传输细节。
 library;
@@ -29,6 +33,9 @@ class ChatApi {
   final Duration timeout;
   final http.Client _client;
 
+  /// 本客户端的发起端类型，随每次请求上报给服务端用于按端过滤能力。移动端固定 "mobile"。
+  static const String platform = 'mobile';
+
   ChatApi({
     required String baseUrl,
     this.authToken,
@@ -44,7 +51,7 @@ class ChatApi {
       };
 
   Future<HealthInfo> health() async {
-    final json = await _send('GET', '/health', null);
+    final json = await _send('GET', '/health?platform=$platform', null);
     return HealthInfo.fromJson(json);
   }
 
@@ -57,6 +64,7 @@ class ChatApi {
       'query': query,
       'session_id': sessionId,
       'user_id': userId,
+      'platform': platform,
       if (location != null && location.isNotEmpty) 'location': location,
     };
     final json = await _send('POST', '/chat', payload);

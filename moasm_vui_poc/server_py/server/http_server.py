@@ -11,11 +11,18 @@ from __future__ import annotations
 import json
 import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
-from .schemas import BadRequest, ChatRequest
+from .schemas import BadRequest, ChatRequest, normalize_platform
 from .service import ChatService
 
 _log = logging.getLogger("server.http")
+
+
+def _first_qs(query: str, key: str) -> str | None:
+    """取查询串里某参数的首个值（无则 None）。"""
+    values = parse_qs(query).get(key)
+    return values[0] if values else None
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -30,8 +37,16 @@ class _Handler(BaseHTTPRequestHandler):
         return self.server.auth_token  # type: ignore[attr-defined]
 
     def do_GET(self) -> None:
-        if self.path == "/health":
-            self._json(200, {"status": "ok", "capabilities": self._service.capabilities})
+        parts = urlsplit(self.path)
+        if parts.path == "/health":
+            # 能力清单按端过滤：client_flutter 带 ?platform=mobile，拿不到 PC-only 能力（music_control）。
+            # 不带该参数（chat_app/client_py 或老客户端）默认 pc，全量能力，行为不变。
+            try:
+                platform = normalize_platform(_first_qs(parts.query, "platform"))
+            except BadRequest as e:
+                self._json(400, {"error": str(e)})
+                return
+            self._json(200, {"status": "ok", "capabilities": self._service.capabilities_for(platform)})
         else:
             self._json(404, {"error": "未知路径"})
 

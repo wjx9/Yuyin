@@ -25,6 +25,7 @@ class RouteContext:
     location: str | None = None  # "经度,纬度"，高德等基于位置的能力用
     include_data: bool = True
     history: list[Turn] = field(default_factory=list)  # 最近若干轮问答（最旧在前），供需要上下文的 handler 使用
+    platform: str = "pc"  # 发起端类型："pc"（chat_app / client_py）或 "mobile"（client_flutter）。见 Handler.pc_only
 
 
 @dataclass
@@ -49,6 +50,10 @@ class Handler(ABC):
 
     intent: str = ""  # 唯一 id，如 "tripnow_public" / "express_tracking" / "amap_poi"
     description: str = ""  # 给分类器看的自然语言说明
+    # PC-only：该能力的副作用发生在**服务端本机**（如控制本机 mpv 的暂停/切歌/音量），
+    # 对"通过深链在自己设备上播放"的移动端毫无意义甚至误导。置 True 后，platform=="mobile"
+    # 的请求既看不到它（不进 /health 能力清单），分类器也不会路由到它。默认 False（全端可见）。
+    pc_only: bool = False
 
     def spec(self) -> IntentSpec:
         return IntentSpec(self.intent, self.description)

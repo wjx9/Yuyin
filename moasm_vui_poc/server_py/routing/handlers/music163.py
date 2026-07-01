@@ -69,6 +69,10 @@ _VOLUME_HINT = re.compile(r"音量|声音|大声|小声|大点|小点|静音|外
 
 class MusicControlHandler(Handler):
     intent = "music_control"
+    # PC-only：暂停/切歌/音量都是对**服务端本机 mpv** 的控制。移动端是"点歌→深链拉起网易云 app、
+    # 在手机上自己放"，服务端 mpv 根本不是它的播放目标，控制指令打过去只会停到 PC 上那路声音、
+    # 手机 app 纹丝不动。故对 mobile 隐藏（能力清单 + 路由都不暴露），只在 chat_app / client_py（PC）可用。
+    pc_only = True
     description = (
         "音乐播放控制：暂停/继续/停止/上一首/下一首/调音量，"
         "如'暂停'、'继续播放'、'下一首'、'声音大一点'、'音量调到50'、'静音'。"
