@@ -499,6 +499,10 @@ ncm-cli login            # 跟随二维码/链接完成授权；ncm-cli login --
 - **退出码不可靠**：CLI 逻辑失败时进程仍可能返回 0，故一律以 JSON 的 `success` 字段判定。
 - **Windows 坑**：npm 全局入口是 `ncm-cli.cmd` 垫片，Python `subprocess`(不走 shell)执行不了，
   故默认改用 `node <npm全局>/@music163/ncm-cli/dist/index.js` 拉起（自动定位，见 `music163/config.py`）。
+- **mpv 找不到就静默不放**：ncm-cli 在线播放依赖 mpv，且 Windows 上常不在 PATH；此时 `play`
+  仍返回 rc=0 空输出（我方按成功处理）→ 报了"正在播放"却没声。故在 `.env` 配 `MUSIC163_MPV`
+  指到 mpv.exe，封装会把其目录**并入本进程 `os.environ["PATH"]`**（不能只给 subprocess 传 `env=`——
+  Windows 下 node 再 spawn 的 mpv 仍按本进程 PATH 查找）。真伪以 `state.status=='playing'` 为准。
 - **search 需先登录**：未登录时 `search` 命令根本不在 CLI 的命令树里（登录后由服务端动态下发），
   这也是为何把"登录"作为运行期前提单列。
 - **`search all` 是综合搜索**（混入歌手/专辑/歌单，它们也带 id/name 但无 `duration`），故改用

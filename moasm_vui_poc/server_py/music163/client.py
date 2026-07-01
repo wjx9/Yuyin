@@ -37,11 +37,17 @@ _TIMEOUT = 60  # 秒
 
 
 class NcmCli:
-    def __init__(self, app_id: str, private_key: str, command: str = "ncm-cli"):
+    def __init__(self, app_id: str, private_key: str, command: str = "ncm-cli", mpv_path: str = ""):
         self._app_id = app_id
         self._private_key = private_key
         self._base_argv = shlex.split(command, posix=(os.name != "nt"))
         self._configured = False
+        # mpv 目录：把它并入本进程 PATH，子进程(node→mpv)才继承得到而能出声。
+        # 注意：不能只给 subprocess 传 env=，Windows 下 CreateProcess 找子子进程(mpv)仍走本进程 PATH；
+        # 直接改 os.environ["PATH"] 才对所有后代生效（实测有效）。mpv 不在 PATH 时 play 静默失败。
+        mpv_dir = os.path.dirname(mpv_path) if mpv_path else ""
+        if mpv_dir and mpv_dir not in os.environ.get("PATH", "").split(os.pathsep):
+            os.environ["PATH"] = mpv_dir + os.pathsep + os.environ.get("PATH", "")
 
     def run(self, subcommand: str, args: list[str] | None = None, *, raise_on_failure: bool = True) -> Any:
         """执行 `<cli> <subcommand> <args...> --output json`，返回解析后的 JSON 信封。

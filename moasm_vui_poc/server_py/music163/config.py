@@ -39,6 +39,7 @@ class Music163Settings:
     app_id: str
     private_key: str
     cli_command: str = _DEFAULT_CLI
+    mpv_path: str = ""  # 非空则注入子进程 PATH，供 ncm-cli 找到 mpv 播放
 
     @classmethod
     def from_env(cls) -> "Music163Settings":
@@ -46,9 +47,18 @@ class Music163Settings:
         private_key = os.getenv("MUSIC163_PRIVATE_KEY", "").strip()
         if not (app_id and private_key):
             raise Music163Error("缺少 MUSIC163_APPID / MUSIC163_PRIVATE_KEY 环境变量")
-        return cls(app_id=app_id, private_key=private_key, cli_command=_resolve_cli_command())
+        return cls(
+            app_id=app_id,
+            private_key=private_key,
+            cli_command=_resolve_cli_command(),
+            # mpv 路径统一放 .env（Windows 上 ncm-cli 需要，且常不在 PATH）；空=依赖系统 PATH
+            mpv_path=os.getenv("MUSIC163_MPV", "").strip(),
+        )
 
 
 def build_service(settings: Music163Settings) -> MusicService:
-    cli = NcmCli(settings.app_id, settings.private_key, command=settings.cli_command)
+    cli = NcmCli(
+        settings.app_id, settings.private_key,
+        command=settings.cli_command, mpv_path=settings.mpv_path,
+    )
     return MusicService(cli)
