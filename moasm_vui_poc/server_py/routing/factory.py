@@ -22,6 +22,8 @@ from .handlers import (
     AmapHandler,
     ChitchatHandler,
     ExpressTrackingHandler,
+    MusicControlHandler,
+    MusicPlayHandler,
     TencentHotNewsHandler,
     TencentWeatherHandler,
     TripNowPersonalHandler,
@@ -46,6 +48,7 @@ def build_dispatcher(
     _try_add_kuaidi100(handlers)
     _try_add_amap(handlers, gemini)
     _try_add_tencent_news(handlers)
+    _try_add_music163(handlers)
 
     if extra_handlers:
         handlers.extend(extra_handlers)
@@ -102,3 +105,15 @@ def _try_add_tencent_news(handlers: list[Handler]) -> None:
     service = build_service(TencentNewsSettings.from_env())
     handlers.append(TencentHotNewsHandler(service))
     handlers.append(TencentWeatherHandler(service))
+
+
+def _try_add_music163(handlers: list[Handler]) -> None:
+    # 需 appId + privateKey；缺其一则不启用。OAuth 登录(扫码)与 mpv 安装是运行期前提，
+    # 由 handler 在未登录时给提示，不在此阻塞装配。
+    if not (os.getenv("MUSIC163_APPID", "").strip() and os.getenv("MUSIC163_PRIVATE_KEY", "").strip()):
+        return
+    from music163.config import Music163Settings, build_service
+
+    service = build_service(Music163Settings.from_env())
+    handlers.append(MusicPlayHandler(service))
+    handlers.append(MusicControlHandler(service))

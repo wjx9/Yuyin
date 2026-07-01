@@ -181,13 +181,13 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 ├── kuaidi100_client/           # provider：快递查询（MD5 签名 REST）
 ├── amap_client/                # provider：高德地图（REST 默认 / A2A 可切，见 §8.8）
 ├── tencent_news_client/        # provider：腾讯新闻（官方 Skill/CLI 子进程封装）
-├── music163/                   # provider 占位：网易云音乐（暂仅 docs/，未接入 routing）
+├── music163/                   # provider：网易云音乐（@music163/ncm-cli 封装，见 §8.11）
 ├── routing/                    # 顶层编排（分流）层，依赖各 provider
 │   ├── handler.py / classifier.py / dispatcher.py / gemini.py / factory.py
 │   └── handlers/               # 薄适配器：tripnow / kuaidi100 / amap / tencent_news / chitchat
 ├── server/                     # client-server 服务端适配层（见 §8.10）
 │   └── service.py / session.py / auth.py / schemas.py / http_server.py
-└── tests/                      # pytest（129 用例，网络/子进程全 mock）
+└── tests/                      # pytest（162 用例，网络/子进程全 mock）
 
 # 注：呈现层 ui_py/ 在仓库根（server_py 与 client_py 共享），见 ../README.md 及 §8.9。
 ```
@@ -213,7 +213,7 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 
 ---
 
-## 8. 多能力分流（闲聊 / TripNow / 快递100 / 高德）
+## 8. 多能力分流（闲聊 / TripNow / 快递100 / 高德 / 腾讯新闻 / 网易云音乐）
 
 `tripnow_client` 只是其中一个 provider。当要把多个能力（出行、快递、地图、闲聊）
 组合成一个对话入口时，需要在它们**之上**再加一层"分流"。这层独立成顶层包
@@ -248,6 +248,7 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 | 快递100 | 1（`express_tracking`） | 查物流是单一动作，快递公司识别在 service 内部完成 |
 | TripNow | 2（`tripnow_public` / `tripnow_personal`） | 引擎虽也做内部路由，但**是否带 `union_id`** 是身份分叉，下游模型无法自判，必须在路由层显式拆开 |
 | 腾讯新闻 | 2（`tencent_hot_news` / `tencent_weather`） | 仅保留结构化、联网检索难替代的两项：全国热点榜 + 多天天气预报。主题新闻搜索/流言核查本身偏弱，已下线，交给闲聊联网检索（见 §8.5） |
+| 网易云音乐 | 2（`music_play` / `music_control`） | 点歌(搜+播)与播放控制(暂停/切歌/音量)触发语与参数形态完全不同，拆两意图比单 handler 二次分流更稳（见 §8.11） |
 | 闲聊 | 1（`chitchat`） | 兜底意图，走 Gemini；并开启 Google Search grounding，可联网回答实时/最新类问题（股价、汇率、最新消息等），由模型自行判断是否检索 |
 
 > 结论：分流层只在"下游 agent 无法自行决定"的地方切分意图；能交给 provider
@@ -462,13 +463,59 @@ phase 1 只下发 `text + intent`，结构化 `RouteResult.data`（POI/轨迹等
 provider 的 `requests.Session` 在高并发下的连接池；dispatch 阻塞较久（单轮数秒），
 可评估流式输出。
 
+### 8.11 网易云音乐（@music163/ncm-cli 封装）
+
+与腾讯新闻同构：官方执行面是本地 **CLI**（`@music163/ncm-cli`），登录(OAuth)、搜歌、
+点歌、播放控制都由它在本机完成；**在线播放依赖本机 `mpv`，仅 mac/windows**。本库把它
+薄封装成 `music163` provider（`subprocess` 调用，统一 `--output json`），暴露两个意图：
+
+| 意图 | 触发示例 | 动作 |
+|---|---|---|
+| `music_play` | "我想听方大同的歌"、"放一首晴天" | `search all --keyword` → 取首个可播放(visible)单曲 → `play --song --encrypted-id <32hex> --original-id <num>` |
+| `music_control` | "暂停"、"下一首"、"声音大一点" | 映射到 `pause/resume/stop/next/prev/volume` 子命令 |
+
+**启用步骤（step 1：纯 PC 跑通）**
+
+```bash
+# 1) 装 CLI（Node）与播放器
+npm i -g @music163/ncm-cli
+#   mpv：Windows 用 scoop/choco（choco install mpv），mac 用 brew install mpv
+
+# 2) 拿凭证：music.163.com/st/developer 实名登录 → 取 appId / privateKey，填进 .env：
+#   MUSIC163_APPID=...    MUSIC163_PRIVATE_KEY=...
+
+# 3) 在【服务端这台机器】扫码登录（OAuth，交互式，只需一次）
+ncm-cli login            # 跟随二维码/链接完成授权；ncm-cli login --check 可验证
+```
+
+之后 `python server_py/chat_app.py` 里说"放首七里香"即会命中 `music_play`。
+
+**几个实现/接入要点**
+
+- **凭证持久化**：`appId/privateKey` 由 CLI 自己 `config set` 持久化（不读进程 env），故封装
+  首次调用前自动 `config set`（幂等）；与腾讯 `apikey-set` 同思路。
+- **登录无法自动化**：`ncm-cli login` 是 OAuth 扫码/链接的交互流程，必须人工在服务端机器完成。
+  未登录时 `music_play` 不报错，而是提示去登录（`is_logged_in()` 用 `login --check` 探测）。
+- **退出码不可靠**：CLI 逻辑失败时进程仍可能返回 0，故一律以 JSON 的 `success` 字段判定。
+- **Windows 坑**：npm 全局入口是 `ncm-cli.cmd` 垫片，Python `subprocess`(不走 shell)执行不了，
+  故默认改用 `node <npm全局>/@music163/ncm-cli/dist/index.js` 拉起（自动定位，见 `music163/config.py`）。
+- **search 需先登录**：未登录时 `search` 命令根本不在 CLI 的命令树里（登录后由服务端动态下发），
+  这也是为何把"登录"作为运行期前提单列。
+- **字段来源**：单曲对象字段（`encryptedId`/`originalId`/`name`/`artists`/`visible`）取自 ncm-cli 0.1.6
+  实测；解析在 `music163/models.py` 一处，CLI 升级若有变只改该层。
+
+**分阶段计划**（详见 `music163/docs/introduce.md`）：① 纯 PC（chat_app）跑通 ← 当前；
+② client_py（CS）跑通；③ client_flutter(Android)，其中播放有两条路——3.1 跳转网易云音乐
+app/网页、3.2 嵌入语音助手客户端内播放。CS 架构下"注册技能/搜歌"在云端、"实际播放"在客户端，
+当前 step 1 的本机 mpv 播放不适用于手机端，留待 ②③。
+
 ---
 
 ## 9. 测试（pytest）
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 全量 129 个用例，全部 mock 掉网络/子进程
+python -m pytest -q          # 全量 162 个用例，全部 mock 掉网络/子进程
 ```
 
 覆盖：模型解析、公开/个人业务层、两种传输、配置；快递签名/识别、高德 A2A 与
