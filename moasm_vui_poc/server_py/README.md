@@ -187,7 +187,7 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 │   └── handlers/               # 薄适配器：tripnow / kuaidi100 / amap / tencent_news / chitchat
 ├── server/                     # client-server 服务端适配层（见 §8.10）
 │   └── service.py / session.py / auth.py / schemas.py / http_server.py
-└── tests/                      # pytest（162 用例，网络/子进程全 mock）
+└── tests/                      # pytest（165 用例，网络/子进程全 mock）
 
 # 注：呈现层 ui_py/ 在仓库根（server_py 与 client_py 共享），见 ../README.md 及 §8.9。
 ```
@@ -471,7 +471,7 @@ provider 的 `requests.Session` 在高并发下的连接池；dispatch 阻塞较
 
 | 意图 | 触发示例 | 动作 |
 |---|---|---|
-| `music_play` | "我想听方大同的歌"、"放一首晴天" | `search all --keyword` → 取首个可播放(visible)单曲 → `play --song --encrypted-id <32hex> --original-id <num>` |
+| `music_play` | "我想听方大同的歌"、"放一首晴天" | `search song --keyword`（只搜歌曲，`data.records`）→ 取首个可播放(`visible:true`)单曲 → `play --song --encrypted-id <32hex> --original-id <num>` |
 | `music_control` | "暂停"、"下一首"、"声音大一点" | 映射到 `pause/resume/stop/next/prev/volume` 子命令 |
 
 **启用步骤（step 1：纯 PC 跑通）**
@@ -501,6 +501,13 @@ ncm-cli login            # 跟随二维码/链接完成授权；ncm-cli login --
   故默认改用 `node <npm全局>/@music163/ncm-cli/dist/index.js` 拉起（自动定位，见 `music163/config.py`）。
 - **search 需先登录**：未登录时 `search` 命令根本不在 CLI 的命令树里（登录后由服务端动态下发），
   这也是为何把"登录"作为运行期前提单列。
+- **`search all` 是综合搜索**（混入歌手/专辑/歌单，它们也带 id/name 但无 `duration`），故改用
+  `search song`（`data.records` 纯歌曲）并用 `duration` 区分真歌曲——否则会把"歌手周杰伦(id=6452)"
+  当成歌去 `play` 而静默失败。
+- **版权/可播放性**：很多热门歌 `visible:false`（版权受限/需会员），点播会落到可播放的翻唱/其它版本；
+  全不可播时 `music_play` 提示"当前都不可播放"。这是网易内容侧限制，非本封装问题。
+- **`play` 无回显**：动作类命令成功时 stdout 为空（rc=0），故空输出按成功处理；是否真在放以
+  `state.status=='playing'` 为准（已实测真机出声）。
 - **字段来源**：单曲对象字段（`encryptedId`/`originalId`/`name`/`artists`/`visible`）取自 ncm-cli 0.1.6
   实测；解析在 `music163/models.py` 一处，CLI 升级若有变只改该层。
 
@@ -515,7 +522,7 @@ app/网页、3.2 嵌入语音助手客户端内播放。CS 架构下"注册技�
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 全量 162 个用例，全部 mock 掉网络/子进程
+python -m pytest -q          # 全量 165 个用例，全部 mock 掉网络/子进程
 ```
 
 覆盖：模型解析、公开/个人业务层、两种传输、配置；快递签名/识别、高德 A2A 与

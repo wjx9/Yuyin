@@ -36,11 +36,22 @@ class Song:
 
 
 def parse_songs(payload: Any) -> list[Song]:
-    """从 search 的 JSON 信封里递归捞出"像单曲"的对象，构造 Song 列表（保持出现顺序）。
+    """从 search 的 JSON 信封里取出歌曲列表，构造 Song（保持出现顺序）。
 
-    不写死外层 key（songs / data.songs / result.songs …），只认对象是否同时带
-    (encryptedId 或 originalId) + name —— 对 CLI 输出结构的小幅变化更稳。
+    实测 ncm-cli 0.1.6（已登录）：
+      - `search song` → {code:200, data:{records:[...songs]}}
+      - `search all`  → {code:200, data:{songs:[...], artists:[...], albums:[...], ...}}
+    注意 `search all` 同时含歌手/专辑/歌单（它们也带 id/name，但**没有 duration**），
+    故只取 data.records / data.songs，且用 duration 把"真歌曲"和歌手/专辑区分开——
+    避免拿歌手 id 当歌去 play。
     """
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, dict):
+        for key in ("records", "songs"):
+            lst = data.get(key)
+            if isinstance(lst, list):
+                return [_to_song(s) for s in lst if _looks_like_song(s)]
+    # 兜底：结构有变时全局递归捞（同样要求 duration，排除歌手/专辑/歌单）
     out: list[Song] = []
     _collect(payload, out)
     return out
@@ -58,11 +69,18 @@ def _collect(node: Any, out: list[Song]) -> None:
             _collect(item, out)
 
 
-def _looks_like_song(d: dict) -> bool:
-    return ("encryptedId" in d or "originalId" in d) and "name" in d
+def _looks_like_song(d: Any) -> bool:
+    # 歌曲对象特有 duration（毫秒）；歌手/专辑/歌单条目没有，借此排除。
+    return (
+        isinstance(d, dict)
+        and "name" in d
+        and ("id" in d or "encryptedId" in d)
+        and "duration" in d
+    )
 
 
 def _to_song(d: dict) -> Song:
+    # 单曲对象里 id=加密ID(32hex)、originalId=明文数字；少数旧结构用 encryptedId。
     return Song(
         name=str(d.get("name") or "").strip() or "未知歌曲",
         artists=_artist_names(d.get("artists")),

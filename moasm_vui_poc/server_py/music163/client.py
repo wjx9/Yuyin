@@ -46,13 +46,14 @@ class NcmCli:
     def run(self, subcommand: str, args: list[str] | None = None, *, raise_on_failure: bool = True) -> Any:
         """执行 `<cli> <subcommand> <args...> --output json`，返回解析后的 JSON 信封。
 
-        raise_on_failure=True 时，信封 success==false 抛 Music163Error（用 message）。
-        探测类命令（login --check / state）用 raise_on_failure=False 自行读 success。
+        信封有两种成功标记：`success==true`（login/state 等）或 `code==200`（search 等）。
+        raise_on_failure=True 时，判定为失败就抛 Music163Error。探测类命令
+        （login --check / state）用 raise_on_failure=False 自行读字段。
         """
         self._ensure_credentials()
         data = self._invoke(subcommand, args or [])
-        if raise_on_failure and isinstance(data, dict) and data.get("success") is False:
-            raise Music163Error(str(data.get("message") or "CLI 返回 success=false"))
+        if raise_on_failure and not _envelope_ok(data):
+            raise Music163Error(_envelope_msg(data))
         return data
 
     def _ensure_credentials(self) -> None:
@@ -86,9 +87,29 @@ class NcmCli:
 
         stdout = (proc.stdout or "").strip()
         if not stdout:
+            # 动作类命令（play/pause/resume/next/...）成功时通常无任何输出；rc=0 即视为成功。
+            if proc.returncode == 0:
+                return {}
             detail = (proc.stderr or "").strip()[:300]
-            raise Music163Error(f"网易云音乐 CLI 无输出（rc={proc.returncode}）：{detail}")
+            raise Music163Error(f"网易云音乐 CLI 失败（rc={proc.returncode}）：{detail}")
         try:
             return json.loads(stdout)
         except ValueError as e:
             raise Music163Error(f"网易云音乐 CLI 输出非 JSON：{stdout[:300]}") from e
+
+
+def _envelope_ok(data: Any) -> bool:
+    """信封是否成功：优先看 success，其次 code==200；都没有则视为成功（动作类空信封）。"""
+    if not isinstance(data, dict):
+        return True
+    if "success" in data:
+        return bool(data["success"])
+    if "code" in data:
+        return data.get("code") == 200
+    return True
+
+
+def _envelope_msg(data: Any) -> str:
+    if isinstance(data, dict):
+        return str(data.get("message") or data.get("subCode") or f"CLI 调用失败({data.get('code')})")
+    return "CLI 调用失败"

@@ -28,8 +28,9 @@ class MusicService:
     # ---------- 搜索 / 播放 ----------
 
     def search(self, keyword: str, *, user_input: str | None = None) -> list[Song]:
-        # search 需先登录；all=综合搜索。--userInput 传完整原话作为意图上下文（官方建议）。
-        args = ["all", "--keyword", keyword]
+        # search 需先登录。用 `song`(只搜歌曲，结果在 data.records) 而非 `all`(综合搜索，
+        # 混入歌手/专辑/歌单)，避免把歌手当歌播。--userInput 传原话作意图上下文(官方建议)。
+        args = ["song", "--keyword", keyword]
         if user_input:
             args += ["--userInput", user_input]
         return parse_songs(self._cli.run("search", args))

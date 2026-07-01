@@ -113,16 +113,35 @@ def test_non_json_output_raises(monkeypatch):
         NcmCli("A", "P").run("state")
 
 
+def test_empty_stdout_rc0_is_success(monkeypatch):
+    # play/pause 等动作类成功时无输出（rc=0）：返回 {}，不报错
+    monkeypatch.setattr(subprocess, "run", FakeRunner(FakeCompleted(stdout="", returncode=0)))
+    assert NcmCli("A", "P").run("play", ["--song"]) == {}
+
+
+def test_code_200_envelope_ok(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", FakeRunner(FakeCompleted(stdout='{"code":200,"data":{}}')))
+    assert NcmCli("A", "P").run("search", ["song"]) == {"code": 200, "data": {}}
+
+
+def test_code_non200_raises(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", FakeRunner(FakeCompleted(stdout='{"code":400,"message":"bad"}')))
+    with pytest.raises(Music163Error) as ei:
+        NcmCli("A", "P").run("search", ["song"])
+    assert "bad" in str(ei.value)
+
+
 # ---------- models ----------
 
+# 形状对齐 ncm-cli 0.1.6 真实 `search song`：{code:200, data:{records:[...]}}，单曲带 duration。
 _SEARCH_JSON = {
-    "success": True,
+    "code": 200,
     "data": {
-        "songs": [
-            {"name": "七里香", "encryptedId": "A" * 32, "originalId": "1", "visible": True,
-             "artists": [{"name": "周杰伦"}]},
-            {"name": "晴天", "encryptedId": "B" * 32, "originalId": "2", "visible": False,
-             "artists": ["周杰伦"]},
+        "records": [
+            {"name": "七里香", "id": "A" * 32, "originalId": "1", "duration": 240000,
+             "visible": True, "artists": [{"name": "周杰伦"}]},
+            {"name": "晴天", "id": "B" * 32, "originalId": "2", "duration": 270000,
+             "visible": False, "artists": ["周杰伦"]},
         ]
     },
 }
@@ -171,24 +190,24 @@ def test_play_first_picks_first_visible_and_builds_play_argv():
     cli = FakeCli({"search": _SEARCH_JSON})
     song = MusicService(cli).play_first("周杰伦", user_input="放一首周杰伦")
 
-    assert song.name == "七里香"  # 跳过 visible=False 的不可播放项？此处第一项即可播放
+    assert song.name == "七里香"  # 第一项即可播放(visible)
     search_call = next(c for c in cli.calls if c[0] == "search")
-    assert search_call[1] == ["all", "--keyword", "周杰伦", "--userInput", "放一首周杰伦"]
+    assert search_call[1] == ["song", "--keyword", "周杰伦", "--userInput", "放一首周杰伦"]
     play_call = next(c for c in cli.calls if c[0] == "play")
     assert play_call[1] == ["--song", "--encrypted-id", "A" * 32, "--original-id", "1"]
 
 
 def test_play_first_skips_invisible():
-    only_invisible = {"success": True, "songs": [
-        {"name": "x", "encryptedId": "C" * 32, "originalId": "3", "visible": False, "artists": []},
-    ]}
+    only_invisible = {"code": 200, "data": {"records": [
+        {"name": "x", "id": "C" * 32, "originalId": "3", "duration": 1000, "visible": False, "artists": []},
+    ]}}
     with pytest.raises(Music163Error):
         MusicService(FakeCli({"search": only_invisible})).play_first("x")
 
 
 def test_play_first_no_results_raises():
     with pytest.raises(Music163Error):
-        MusicService(FakeCli({"search": {"success": True, "songs": []}})).play_first("nope")
+        MusicService(FakeCli({"search": {"code": 200, "data": {"records": []}}})).play_first("nope")
 
 
 def test_control_methods_map_to_subcommands():
