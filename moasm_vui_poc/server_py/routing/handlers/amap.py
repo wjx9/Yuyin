@@ -6,7 +6,6 @@ REST 后端需要把自然语言拆成 关键词 + 地点，这一步靠 GeminiM
 
 from __future__ import annotations
 
-import json
 import logging
 
 from amap_client.errors import AmapError
@@ -14,7 +13,7 @@ from amap_client.models import MapQuery
 from amap_client.parser import QueryParser
 from amap_client.service import MapService
 
-from ..gemini import GeminiClient, GeminiError
+from ..gemini import GeminiClient, GeminiError, loads_json_loose
 from ..handler import Handler, RouteContext, RouteResult
 
 _log = logging.getLogger(__name__)
@@ -54,7 +53,7 @@ class GeminiMapQueryParser(QueryParser):
         except GeminiError as e:
             _log.warning("高德查询解析失败，退回整句关键词: %s", e)
             return MapQuery(keywords=query)
-        data = _loads_json(raw)
+        data = loads_json_loose(raw)
         if not isinstance(data, dict):
             return MapQuery(keywords=query)
         keywords = (data.get("keywords") or "").strip() or query
@@ -62,19 +61,3 @@ class GeminiMapQueryParser(QueryParser):
         city = (data.get("city") or "").strip() or None
         _log.debug("高德查询解析: keywords=%r near=%r city=%r", keywords, near, city)
         return MapQuery(keywords=keywords, near=near, city=city)
-
-
-def _loads_json(text: str):
-    """容错解析：剥掉可能的 ```json 代码块，取第一个 {...}。"""
-    t = text.strip()
-    if t.startswith("```"):
-        t = t.strip("`")
-        if t.lower().startswith("json"):
-            t = t[4:]
-    start, end = t.find("{"), t.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return None
-    try:
-        return json.loads(t[start : end + 1])
-    except ValueError:
-        return None

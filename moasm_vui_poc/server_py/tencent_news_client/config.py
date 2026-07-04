@@ -20,12 +20,15 @@ def _bundle_dirs() -> list[str]:
     """优先在"程序旁边"找官方二进制，避免依赖 PATH。
 
     - PyInstaller 打包后：onefile 解包目录(_MEIPASS) + exe 所在目录；
-    - 源码运行：仓库根目录（本包的上一级）。
+    - 源码运行：server_py 目录（本包的上一级）+ 仓库根目录（exe 实际放这里）。
+      不加仓库根目录时，源码运行只有从仓库根启动才碰巧能跑（Windows 子进程
+      按 cwd 兜底解析裸命令名），换个工作目录就找不到 CLI。
     """
     if getattr(sys, "frozen", False):
         dirs = [getattr(sys, "_MEIPASS", ""), os.path.dirname(sys.executable)]
         return [d for d in dirs if d]
-    return [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return [pkg_parent, os.path.dirname(pkg_parent)]
 
 
 def _resolve_cli_command() -> str:

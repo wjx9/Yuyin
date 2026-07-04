@@ -15,6 +15,7 @@ from tencent_news_client.errors import TencentNewsError
 from tencent_news_client.models import NewsResult
 from tencent_news_client.service import NewsService
 
+from routing.gemini import GeminiError
 from routing.handler import RouteContext
 from routing.handlers import (
     TencentFactCheckHandler,
@@ -22,7 +23,12 @@ from routing.handlers import (
     TencentNewsSearchHandler,
     TencentWeatherHandler,
 )
-from routing.handlers.tencent_news import _extract_count, _search_keyword
+from routing.handlers.tencent_news import (
+    GeminiNewsQueryParser,
+    NewsQuery,
+    _extract_count,
+    _search_keyword,
+)
 
 
 class FakeCompleted:
@@ -169,26 +175,89 @@ def test_hot_handler_passes_count_as_limit():
         ("前3个新闻", 3),
         ("有什么大新闻", None),
         ("给我100条", None),  # 超出 1..50 上限
+        ("iPhone 17 的新闻", None),  # 裸数字不是条数
+        ("9月3日阅兵的新闻", None),
+        ("2026年有什么大事", None),  # 年份不因 \d+ 部分匹配被误当条数
     ],
 )
 def test_extract_count(query, expected):
     assert _extract_count(query) == expected
 
 
-def test_search_handler_strips_count_and_passes_keyword():
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("看下深圳今天新闻top5", "深圳"),  # 地区新闻：去话术+计数
+        ("我想看科技新闻", "科技"),  # 分类新闻
+        ("来点美国新闻", "美国"),
+        ("关于苹果公司的新闻", "苹果公司"),  # 主题新闻
+        ("iPhone 17 的新闻", "iPhone 17"),  # 关键词里的数字不被剥掉
+        ("5", "5"),  # 清空后退回原句，避免空关键词
+    ],
+)
+def test_search_keyword_fallback_cleaning(query, expected):
+    assert _search_keyword(query) == expected
+
+
+def test_search_handler_without_parser_uses_regex_cleaning():
     cli = FakeCli()
     h = TencentNewsSearchHandler(NewsService(cli))
     h.handle("看下深圳今天新闻top5", _ctx())
     sub, args = cli.calls[0]
     assert sub == "search"
-    assert args == ["看下深圳今天新闻", "--limit", "5"]
+    assert args == ["深圳", "--limit", "5"]
     assert h.intent == "tencent_news_search"
 
 
-def test_search_keyword_falls_back_to_full_query():
-    # 纯计数 query 去掉数字后为空 → 退回原句，避免空关键词
-    assert _search_keyword("5") == "5"
-    assert _search_keyword("深圳新闻top5") == "深圳新闻"
+def test_search_handler_uses_parser_result():
+    cli = FakeCli()
+
+    class StubParser:
+        def parse(self, query):
+            return NewsQuery(keyword="科技", limit=5)
+
+    h = TencentNewsSearchHandler(NewsService(cli), parser=StubParser())
+    h.handle("我想看科技新闻，来5条", _ctx())
+    assert cli.calls == [("search", ["科技", "--limit", "5"])]
+
+
+# ---------- GeminiNewsQueryParser ----------
+
+class FakeGemini:
+    def __init__(self, raw="", error=None):
+        self.raw = raw
+        self.error = error
+
+    def generate(self, prompt, **kwargs):
+        if self.error:
+            raise self.error
+        return self.raw
+
+
+def test_parser_extracts_keyword_and_limit():
+    p = GeminiNewsQueryParser(FakeGemini('{"keyword": "科技", "limit": 5}'))
+    assert p.parse("我想看科技新闻top5") == NewsQuery("科技", 5)
+
+
+def test_parser_tolerates_code_fence_and_null_limit():
+    p = GeminiNewsQueryParser(FakeGemini('```json\n{"keyword": "深圳", "limit": null}\n```'))
+    assert p.parse("看看深圳的新闻") == NewsQuery("深圳", None)
+
+
+def test_parser_rechecks_bad_limit_with_regex():
+    # LLM 给出超范围 limit → 用正则从原句重新抠条数
+    p = GeminiNewsQueryParser(FakeGemini('{"keyword": "美国", "limit": 999}'))
+    assert p.parse("来5条美国新闻") == NewsQuery("美国", 5)
+
+
+def test_parser_falls_back_on_garbage_output():
+    p = GeminiNewsQueryParser(FakeGemini("抱歉我不明白"))
+    assert p.parse("我想看科技新闻") == NewsQuery("科技", None)
+
+
+def test_parser_falls_back_on_gemini_error():
+    p = GeminiNewsQueryParser(FakeGemini(error=GeminiError("down")))
+    assert p.parse("来点美国新闻") == NewsQuery("美国", None)
 
 
 def test_weather_handler_maps_city_to_adcode():

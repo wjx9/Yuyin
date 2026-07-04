@@ -25,6 +25,7 @@ from .handlers import (
     MusicControlHandler,
     MusicPlayHandler,
     TencentHotNewsHandler,
+    TencentNewsSearchHandler,
     TencentWeatherHandler,
     TripNowPersonalHandler,
     TripNowPublicHandler,
@@ -47,7 +48,7 @@ def build_dispatcher(
     _try_add_tripnow(handlers)
     _try_add_kuaidi100(handlers)
     _try_add_amap(handlers, gemini)
-    _try_add_tencent_news(handlers)
+    _try_add_tencent_news(handlers, gemini)
     _try_add_music163(handlers)
 
     if extra_handlers:
@@ -94,16 +95,21 @@ def _try_add_amap(handlers: list[Handler], gemini: GeminiClient) -> None:
     handlers.append(AmapHandler(service))
 
 
-def _try_add_tencent_news(handlers: list[Handler]) -> None:
+def _try_add_tencent_news(handlers: list[Handler], gemini: GeminiClient) -> None:
     if not os.getenv("TENCENT_NEWS_API_KEY", "").strip():
         return
     from tencent_news_client.config import TencentNewsSettings, build_service
 
-    # 仅启用结构化、grounding 难替代的两个能力：全国热点榜 + 多天天气预报。
-    # 主题新闻搜索(search)与流言核查(jiaozhen)本身较弱，已交由 chitchat 联网检索覆盖，
-    # 故不再注册（Handler 类仍保留，将来需要可零成本恢复）。
+    from .handlers.tencent_news import GeminiNewsQueryParser
+
+    # 启用三个能力：全国热点榜 + 新闻搜索 + 多天天气预报。
+    # search 承接地区新闻（"深圳的新闻"、"美国新闻"）与分类新闻（"科技新闻"）——
+    # 这是 VUI 的高频场景，走 chitchat 联网检索既慢又不出自腾讯新闻，故回归 search；
+    # 检索词质量由 GeminiNewsQueryParser 保证（整句话术喂全文检索会命中大量噪声）。
+    # 流言核查(jiaozhen)本身较弱，仍由 chitchat 联网检索覆盖，不注册。
     service = build_service(TencentNewsSettings.from_env())
     handlers.append(TencentHotNewsHandler(service))
+    handlers.append(TencentNewsSearchHandler(service, parser=GeminiNewsQueryParser(gemini)))
     handlers.append(TencentWeatherHandler(service))
 
 

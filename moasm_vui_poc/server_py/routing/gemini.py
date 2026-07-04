@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 import requests
@@ -108,6 +109,26 @@ class GeminiClient:
             return resp.json()["candidates"][0]
         except (KeyError, IndexError, ValueError):
             return {}
+
+
+def loads_json_loose(text: str):
+    """容错解析 LLM 输出的 JSON：剥掉可能的 ```json 代码块，取第一个 {...}。
+
+    供各"用 Gemini 做结构化抽取"的解析器共用（高德查询解析、新闻查询解析等）。
+    解析不出返回 None，由调用方自行兜底。
+    """
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.strip("`")
+        if t.lower().startswith("json"):
+            t = t[4:]
+    start, end = t.find("{"), t.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        return json.loads(t[start : end + 1])
+    except ValueError:
+        return None
 
 
 def _extract_text(candidate: dict) -> str:
