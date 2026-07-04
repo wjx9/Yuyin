@@ -30,8 +30,10 @@ class RestMapService(MapService):
         self._default_location = default_location
         self._parser = parser or NaiveQueryParser()
 
-    def ask(self, query: str, *, location: str | None = None) -> MapResult:
-        mq = self._parser.parse(query)
+    def ask(
+        self, query: str, *, location: str | None = None, preparsed: MapQuery | None = None
+    ) -> MapResult:
+        mq = preparsed or self._parser.parse(query)
         keywords = mq.keywords or query
         loc = self._resolve_location(mq, explicit=location)
         if loc:

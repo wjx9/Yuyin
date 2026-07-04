@@ -1,8 +1,11 @@
 """Gemini REST 客户端（仅用 requests，零额外 SDK 依赖）。
 
-在分流层有两个用途：① GeminiClassifier 做意图分类；② ChitchatHandler 做闲聊兜底。
+在分流层有两个用途：① GeminiClassifier 做意图分类+槽位抽取（function calling，
+choose_function）；② ChitchatHandler 做闲聊兜底（answer/generate）。
 闲聊兜底可开启 Google Search grounding：是否真去联网由模型自行判断（简单问题不触发），
 搜后基于网页作答并回传来源。
+
+本模块只做传输与解析，不含任何业务语义：function 声明由调用方（分类器）拼好传入。
 """
 
 from __future__ import annotations
@@ -34,6 +37,14 @@ class GeminiAnswer:
 
     text: str
     sources: list[Source] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FunctionCall:
+    """模型选择调用的一个函数：名字 + 参数（原样透传，语义校验由调用方负责）。"""
+
+    name: str
+    args: dict = field(default_factory=dict)
 
 
 class GeminiClient:
@@ -89,6 +100,32 @@ class GeminiClient:
         candidate = self._post(body)
         return GeminiAnswer(text=_extract_text(candidate), sources=_extract_sources(candidate))
 
+    def choose_function(
+        self,
+        prompt: str,
+        *,
+        declarations: list[dict],
+        system: str | None = None,
+        temperature: float = 0.0,
+    ) -> FunctionCall | None:
+        """Function calling：让模型从 declarations 中强制选一个函数并填参数。
+
+        declarations 是 Gemini functionDeclarations 原始格式的 dict 列表
+        （{"name", "description", 可选 "parameters"}），由调用方拼装。
+        mode=ANY 强制模型必须调用其中一个函数（而非输出自由文本），因此
+        "一次调用同时得到意图(函数名)+槽位(参数)"。极少数情况下模型仍可能
+        不回 functionCall，此时返回 None，由调用方兜底。
+        """
+        body: dict = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": temperature},
+            "tools": [{"functionDeclarations": declarations}],
+            "toolConfig": {"functionCallingConfig": {"mode": "ANY"}},
+        }
+        if system:
+            body["systemInstruction"] = {"parts": [{"text": system}]}
+        return _extract_function_call(self._post(body))
+
     def _post(self, body: dict) -> dict:
         """发请求并返回首个 candidate（dict）；网络/HTTP 错误抛 GeminiError。"""
         url = f"{_BASE}/{self._model}:generateContent"
@@ -129,6 +166,19 @@ def loads_json_loose(text: str):
         return json.loads(t[start : end + 1])
     except ValueError:
         return None
+
+
+def _extract_function_call(candidate: dict) -> FunctionCall | None:
+    try:
+        parts = candidate["content"]["parts"]
+    except (KeyError, TypeError):
+        return None
+    for p in parts:
+        fc = p.get("functionCall")
+        if isinstance(fc, dict) and fc.get("name"):
+            args = fc.get("args")
+            return FunctionCall(name=fc["name"], args=args if isinstance(args, dict) else {})
+    return None
 
 
 def _extract_text(candidate: dict) -> str:

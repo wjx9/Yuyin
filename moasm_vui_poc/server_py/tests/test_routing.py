@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from routing.classifier import GeminiClassifier, KeywordClassifier
+from routing.classifier import GeminiClassifier, KeywordClassifier, Route
 from routing.dispatcher import Dispatcher
-from routing.gemini import GeminiAnswer, GeminiClient, GeminiError, Source
-from routing.handler import Handler, IntentSpec, RouteContext, RouteResult
+from routing.gemini import FunctionCall, GeminiAnswer, GeminiClient, GeminiError, Source
+from routing.handler import Handler, IntentSpec, RouteContext, RouteResult, SlotSpec
 from routing.handlers.chitchat import ChitchatHandler
 from routing.handlers.kuaidi100 import ExpressTrackingHandler
 
@@ -13,14 +13,21 @@ from routing.handlers.kuaidi100 import ExpressTrackingHandler
 # ---- 测试替身 ----
 
 class FakeGemini:
-    def __init__(self, reply="", raise_error=False, sources=None):
+    """假 GeminiClient：generate/answer 回固定文本；choose_function 回固定 FunctionCall。
+
+    call 便捷写法：传 str 等价于 FunctionCall(str)（意图命中、无槽位）。
+    """
+
+    def __init__(self, reply="", call=None, raise_error=False, sources=None):
         self._reply = reply
+        self._call = FunctionCall(call) if isinstance(call, str) else call
         self._raise = raise_error
         self._sources = sources or []
         self.last_prompt = None
         self.last_system = None
         self.last_history = None
         self.last_grounded = None
+        self.last_declarations = None
 
     def generate(self, prompt, *, system=None, temperature=0.0, history=None):
         self.last_prompt = prompt
@@ -39,6 +46,14 @@ class FakeGemini:
             raise GeminiError("down")
         return GeminiAnswer(text=self._reply, sources=list(self._sources))
 
+    def choose_function(self, prompt, *, declarations, system=None, temperature=0.0):
+        self.last_prompt = prompt
+        self.last_system = system
+        self.last_declarations = declarations
+        if self._raise:
+            raise GeminiError("down")
+        return self._call
+
 
 class EchoHandler(Handler):
     def __init__(self, intent, description="desc"):
@@ -54,6 +69,10 @@ SPECS = [
     IntentSpec("express_tracking", "查快递"),
     IntentSpec("amap", "地图"),
     IntentSpec("tripnow_public", "公开出行"),
+    IntentSpec("news", "搜新闻", slots=(
+        SlotSpec("keyword", "string", "检索词"),
+        SlotSpec("limit", "integer", "条数"),
+    )),
 ]
 
 
@@ -61,66 +80,93 @@ SPECS = [
 
 def test_keyword_matches_express():
     c = KeywordClassifier()
-    assert c.classify("我的快递到哪了", SPECS, default="chitchat") == "express_tracking"
+    assert c.classify("我的快递到哪了", SPECS, default="chitchat") == Route("express_tracking")
 
 
 def test_keyword_matches_amap():
     c = KeywordClassifier()
-    assert c.classify("附近有什么好吃的", SPECS, default="chitchat") == "amap"
+    assert c.classify("附近有什么好吃的", SPECS, default="chitchat").intent == "amap"
 
 
 def test_keyword_falls_back_to_default():
     c = KeywordClassifier()
-    assert c.classify("今天天气真好啊", SPECS, default="chitchat") == "chitchat"
+    assert c.classify("今天天气真好啊", SPECS, default="chitchat").intent == "chitchat"
 
 
 def test_keyword_ignores_unregistered_intent():
     # amap 未注册时不应命中 amap
     specs = [IntentSpec("chitchat", "闲聊")]
     c = KeywordClassifier()
-    assert c.classify("附近的咖啡", specs, default="chitchat") == "chitchat"
+    assert c.classify("附近的咖啡", specs, default="chitchat").intent == "chitchat"
 
 
-# ---- GeminiClassifier ----
+# ---- GeminiClassifier（function calling：一次调用出 意图+槽位）----
 
-def test_gemini_classifier_uses_llm_output():
-    g = FakeGemini(reply="amap")
+def test_gemini_classifier_uses_function_call():
+    g = FakeGemini(call="amap")
     c = GeminiClassifier(g)
-    assert c.classify("带我去哪", SPECS, default="chitchat") == "amap"
-    assert "可选意图" in g.last_prompt  # 动态拼了意图列表
+    assert c.classify("带我去哪", SPECS, default="chitchat") == Route("amap")
+    # 每个意图编译成一个 function 声明，description 原样带上
+    names = [d["name"] for d in g.last_declarations]
+    assert names == [s.id for s in SPECS]
+    assert g.last_declarations[2]["description"] == "地图"
 
 
-def test_gemini_prompt_carries_default_for_fallback():
-    g = FakeGemini(reply="chitchat")
+def test_gemini_declarations_carry_slot_schema():
+    g = FakeGemini(call="chitchat")
+    GeminiClassifier(g).classify("x", SPECS, default="chitchat")
+    news = next(d for d in g.last_declarations if d["name"] == "news")
+    assert news["parameters"]["properties"]["keyword"] == {"type": "string", "description": "检索词"}
+    assert news["parameters"]["properties"]["limit"]["type"] == "integer"
+    # 无槽位的意图不带 parameters（空 schema 徒增 token 且部分模型不接受）
+    assert "parameters" not in g.last_declarations[0]
+
+
+def test_gemini_classifier_returns_cleaned_slots():
+    g = FakeGemini(call=FunctionCall("news", {"keyword": " 深圳 ", "limit": 5.0, "bogus": 1}))
+    route = GeminiClassifier(g).classify("看看深圳的新闻来5条", SPECS, default="chitchat")
+    # 声明外的键被丢弃；string 去空白；integer 收敛 float 整数
+    assert route == Route("news", {"keyword": "深圳", "limit": 5})
+
+
+def test_gemini_classifier_drops_ill_typed_slots():
+    g = FakeGemini(call=FunctionCall("news", {"keyword": "", "limit": "五"}))
+    route = GeminiClassifier(g).classify("新闻", SPECS, default="chitchat")
+    assert route == Route("news", {})  # 类型不对的槽位丢弃，交给 handler 兜底
+
+
+def test_gemini_system_prompt_carries_default_for_fallback():
+    g = FakeGemini(call="chitchat")
     GeminiClassifier(g).classify("含糊的输入", SPECS, default="chitchat")
-    # 提示词里告知模型：拿不准就选兜底意图
-    assert "chitchat" in g.last_prompt and "兜底" in g.last_prompt
+    # system 指令里告知模型：拿不准就选兜底技能
+    assert "chitchat" in g.last_system and "兜底" in g.last_system
 
 
 def test_gemini_classifier_falls_back_on_error():
     g = FakeGemini(raise_error=True)
     c = GeminiClassifier(g, fallback=KeywordClassifier())
     # Gemini 挂了 -> 关键词兜底 -> 命中快递
-    assert c.classify("快递单号查询", SPECS, default="chitchat") == "express_tracking"
+    assert c.classify("快递单号查询", SPECS, default="chitchat").intent == "express_tracking"
 
 
-def test_gemini_classifier_falls_back_on_invalid_output():
-    g = FakeGemini(reply="这不是任何一个id")
+def test_gemini_classifier_falls_back_on_unknown_function():
+    g = FakeGemini(call="这不是任何一个id")
     c = GeminiClassifier(g, fallback=KeywordClassifier())
-    assert c.classify("普通聊天", SPECS, default="chitchat") == "chitchat"
+    assert c.classify("普通聊天", SPECS, default="chitchat").intent == "chitchat"
 
 
-def test_gemini_classifier_tolerates_extra_text():
-    g = FakeGemini(reply="意图是 express_tracking 哦")
-    c = GeminiClassifier(g)
-    assert c.classify("x", SPECS, default="chitchat") == "express_tracking"
+def test_gemini_classifier_falls_back_when_no_function_call():
+    # mode=ANY 下模型极少数情况仍可能不回 functionCall（choose_function 返回 None）
+    g = FakeGemini(call=None)
+    c = GeminiClassifier(g, fallback=KeywordClassifier())
+    assert c.classify("我的快递到哪了", SPECS, default="chitchat").intent == "express_tracking"
 
 
 # ---- Dispatcher ----
 
 def test_dispatcher_routes_to_classified_handler():
     handlers = [EchoHandler("chitchat"), EchoHandler("amap")]
-    g = FakeGemini(reply="amap")
+    g = FakeGemini(call="amap")
     d = Dispatcher(handlers, GeminiClassifier(g), default_intent="chitchat")
     result = d.dispatch("找路线", RouteContext())
     assert result.intent == "amap"
@@ -129,9 +175,52 @@ def test_dispatcher_routes_to_classified_handler():
 
 def test_dispatcher_collects_intents_for_classifier():
     handlers = [EchoHandler("chitchat"), EchoHandler("amap", "地图周边")]
-    g = FakeGemini(reply="amap")
+    g = FakeGemini(call="amap")
     Dispatcher(handlers, GeminiClassifier(g), default_intent="chitchat").classify("x")
-    assert "amap" in g.last_prompt and "地图周边" in g.last_prompt
+    decls = {d["name"]: d for d in g.last_declarations}
+    assert decls["amap"]["description"] == "地图周边"
+
+
+def test_dispatcher_passes_slots_to_handler_context():
+    seen = {}
+
+    class SlottedHandler(Handler):
+        intent = "news"
+        description = "搜新闻"
+        slots = (SlotSpec("keyword", "string", "检索词"),)
+
+        def handle(self, query, context):
+            seen.update(context.slots)
+            return RouteResult(text="ok", intent=self.intent)
+
+    g = FakeGemini(call=FunctionCall("news", {"keyword": "深圳"}))
+    d = Dispatcher([EchoHandler("chitchat"), SlottedHandler()], GeminiClassifier(g), default_intent="chitchat")
+    d.dispatch("看看深圳的新闻", RouteContext())
+    assert seen == {"keyword": "深圳"}
+
+
+def test_dispatcher_clears_slots_when_falling_back():
+    # 分类命中不可用意图时回退默认，槽位是按原意图抽的，不得带给默认 handler
+    from routing.classifier import IntentClassifier
+
+    class GhostClassifier(IntentClassifier):
+        def classify(self, query, intents, *, default):
+            return Route("ghost_intent", {"keyword": "深圳"})  # 未注册的意图 + 残留槽位
+
+    seen = {"marker": "not-touched"}
+
+    class SpyChitchat(Handler):
+        intent = "chitchat"
+        description = "闲聊"
+
+        def handle(self, query, context):
+            seen.clear()
+            seen.update(context.slots)
+            return RouteResult(text="ok", intent=self.intent)
+
+    d = Dispatcher([SpyChitchat()], GhostClassifier(), default_intent="chitchat")
+    d.dispatch("x", RouteContext())
+    assert seen == {}
 
 
 def _pc_only_dispatcher(gemini):
@@ -142,28 +231,29 @@ def _pc_only_dispatcher(gemini):
 
 
 def test_pc_only_intent_hidden_from_mobile_capabilities():
-    d = _pc_only_dispatcher(FakeGemini(reply="chitchat"))
+    d = _pc_only_dispatcher(FakeGemini(call="chitchat"))
     assert "music_control" in d.intents_for("pc")
     assert "music_control" not in d.intents_for("mobile")
     assert d.intents == d.intents_for("pc")  # 默认 pc
 
 
 def test_pc_only_intent_not_offered_to_mobile_classifier():
-    g = FakeGemini(reply="chitchat")
+    g = FakeGemini(call="chitchat")
     _pc_only_dispatcher(g).classify("暂停", platform="mobile")
-    assert "music_control" not in g.last_prompt  # 分类器压根看不到它
+    # 分类器压根看不到它：function 声明里没有 music_control
+    assert all(d["name"] != "music_control" for d in g.last_declarations)
 
 
 def test_mobile_dispatch_falls_back_when_classifier_forces_pc_only():
     # 防御性兜底：即便分类器（如关键词兜底）硬命中 pc_only，mobile 请求也不落到它，回退默认
-    g = FakeGemini(reply="music_control")
+    g = FakeGemini(call="music_control")
     d = _pc_only_dispatcher(g)
     result = d.dispatch("暂停", RouteContext(platform="mobile"))
     assert result.intent == "chitchat"
 
 
 def test_pc_dispatch_still_routes_to_pc_only():
-    g = FakeGemini(reply="music_control")
+    g = FakeGemini(call="music_control")
     d = _pc_only_dispatcher(g)
     result = d.dispatch("暂停", RouteContext(platform="pc"))
     assert result.intent == "music_control"
@@ -283,6 +373,40 @@ def test_gemini_grounded_adds_search_tool_and_parses_sources():
     assert ans.sources == [Source("robinhood.com", "https://a"), Source("fidelity.com", "https://b")]
 
 
+def test_gemini_choose_function_posts_declarations_and_parses_call():
+    class _FcResp:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [
+                {"functionCall": {"name": "news", "args": {"keyword": "深圳"}}},
+            ]}}]}
+
+    class _Sess:
+        def __init__(self):
+            self.posted = None
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            self.posted = json
+            return _FcResp()
+
+    sess = _Sess()
+    decls = [{"name": "news", "description": "搜新闻"}]
+    fc = GeminiClient("key", session=sess).choose_function("看看深圳的新闻", declarations=decls)
+    assert sess.posted["tools"] == [{"functionDeclarations": decls}]
+    # mode=ANY：强制模型必须调用一个函数，一次拿到 意图+槽位
+    assert sess.posted["toolConfig"] == {"functionCallingConfig": {"mode": "ANY"}}
+    assert fc == FunctionCall("news", {"keyword": "深圳"})
+
+
+def test_gemini_choose_function_returns_none_on_text_reply():
+    # 极少数情况模型不回 functionCall 只回文本 → None，由调用方兜底
+    sess = _RecordingSession()  # 其 json() 只含 text part
+    fc = GeminiClient("key", session=sess).choose_function("x", declarations=[{"name": "a", "description": "d"}])
+    assert fc is None
+
+
 def test_chitchat_system_prompt_lists_real_capabilities():
     g = FakeGemini(reply="我能查火车票…")
     h = ChitchatHandler(g)
@@ -361,7 +485,7 @@ def test_dispatch_logs_routing_decision(caplog):
     import logging
 
     handlers = [EchoHandler("chitchat"), EchoHandler("amap")]
-    d = Dispatcher(handlers, GeminiClassifier(FakeGemini(reply="amap")), default_intent="chitchat")
+    d = Dispatcher(handlers, GeminiClassifier(FakeGemini(call="amap")), default_intent="chitchat")
     with caplog.at_level(logging.INFO, logger="routing.dispatcher"):
         d.dispatch("找路线", RouteContext())
     text = "\n".join(r.getMessage() for r in caplog.records)

@@ -282,6 +282,59 @@ def test_rest_named_place_unresolved_falls_back_to_default():
     assert session.calls[1]["params"]["location"] == "113.93,22.57"
 
 
+def test_rest_prefers_preparsed_over_parser():
+    from amap_client.models import MapQuery
+
+    session = MultiGetSession({"text": _rest_ok([{"name": "店", "location": "1,2"}])})
+    service = RestMapService(
+        AmapRestClient(key="K", session=session),
+        parser=StubParser(MapQuery(keywords="parser不该被用到")),
+    )
+    service.ask("来点咖啡", preparsed=MapQuery(keywords="咖啡", city="深圳"))
+    assert session.calls[0]["params"]["keywords"] == "咖啡"
+    assert session.calls[0]["params"]["city"] == "深圳"
+
+
+def test_amap_handler_passes_classifier_slots_as_preparsed():
+    # 主路径：意图分类顺带抽出的槽位经 context.slots 直通 service，零额外 LLM 调用
+    from routing.handler import RouteContext
+    from routing.handlers.amap import AmapHandler
+
+    class SpyService:
+        def __init__(self):
+            self.preparsed = "not-called"
+
+        def ask(self, query, *, location=None, preparsed=None):
+            self.preparsed = preparsed
+            from amap_client.models import MapResult
+            return MapResult(text="ok")
+
+    svc = SpyService()
+    ctx = RouteContext(slots={"keywords": "美食", "near": "深圳万科云城", "city": "深圳"})
+    AmapHandler(svc).handle("深圳万科云城附近好吃的推荐", ctx)
+    assert svc.preparsed.keywords == "美食"
+    assert svc.preparsed.near == "深圳万科云城"
+    assert svc.preparsed.city == "深圳"
+
+
+def test_amap_handler_without_slots_lets_service_parse():
+    from routing.handler import RouteContext
+    from routing.handlers.amap import AmapHandler
+
+    class SpyService:
+        def __init__(self):
+            self.preparsed = "not-called"
+
+        def ask(self, query, *, location=None, preparsed=None):
+            self.preparsed = preparsed
+            from amap_client.models import MapResult
+            return MapResult(text="ok")
+
+    svc = SpyService()
+    AmapHandler(svc).handle("附近的咖啡", RouteContext())  # 槽位为空（如关键词兜底分类）
+    assert svc.preparsed is None  # 交回 service 内部 parser（降级路径）
+
+
 def test_gemini_map_query_parser_extracts_fields():
     from routing.gemini import GeminiAnswer
     from routing.handlers.amap import GeminiMapQueryParser

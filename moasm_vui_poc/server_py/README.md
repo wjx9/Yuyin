@@ -247,7 +247,7 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 | 高德 | 1（`amap`） | 对外单一入口；后端可切（默认 REST，见 §8.8），`MapService` 接口屏蔽差异 |
 | 快递100 | 1（`express_tracking`） | 查物流是单一动作，快递公司识别在 service 内部完成 |
 | TripNow | 2（`tripnow_public` / `tripnow_personal`） | 引擎虽也做内部路由，但**是否带 `union_id`** 是身份分叉，下游模型无法自判，必须在路由层显式拆开 |
-| 腾讯新闻 | 2（`tencent_hot_news` / `tencent_weather`） | 仅保留结构化、联网检索难替代的两项：全国热点榜 + 多天天气预报。主题新闻搜索/流言核查本身偏弱，已下线，交给闲聊联网检索（见 §8.5） |
+| 腾讯新闻 | 3（`tencent_hot_news` / `tencent_news_search` / `tencent_weather`） | 全国热点榜、指定对象新闻（地区/分类/主题，检索词+条数由分类器随槽位一次抽出）、多天天气预报。流言核查本身偏弱，不单列，交给闲聊联网检索（见 §8.5） |
 | 网易云音乐 | 2（`music_play` / `music_control`） | 点歌(搜+播)与播放控制(暂停/切歌/音量)触发语与参数形态完全不同，拆两意图比单 handler 二次分流更稳（见 §8.11） |
 | 闲聊 | 1（`chitchat`） | 兜底意图，走 Gemini；并开启 Google Search grounding，可联网回答实时/最新类问题（股价、汇率、最新消息等），由模型自行判断是否检索 |
 
@@ -257,9 +257,10 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 
 ### 8.3 "灵活增加能力"如何做到
 
-每个 `Handler` 自带 `intent`（唯一 id）和 `description`（自然语言）。
-分类器的提示词是**从已注册 handlers 动态拼出来的**，自身不写死任何业务意图。
-所以新增一个能力 = 写一个 `Handler` + 注册，**分类器和分发器零改动**：
+每个 `Handler` 自带 `intent`（唯一 id）、`description`（自然语言），还可声明
+`slots`（希望分类器顺带抽取的参数，见 §8.5）。分类器把已注册 handlers 动态编译成
+function calling 的函数声明，自身不写死任何业务意图。所以新增一个能力 = 写一个
+`Handler` + 注册，**分类器和分发器零改动**：
 
 ```python
 from routing import build_dispatcher, RouteContext, Handler, RouteResult
@@ -296,14 +297,22 @@ python server_py/chat_app.py "深圳明天下雨吗"            # 命中 tencent
 python server_py/chat_app.py "看下 apple 公司的股价"     # 命中 chitchat，自动联网检索后作答
 ```
 
-链路：`用户输入 → Dispatcher.classify（Gemini 分类，失败/非法回退关键词）
-→ 选中 Handler → 调对应 provider（各自内部再做场景/工具路由）→ 统一 RouteResult`。
+链路：`用户输入 → Dispatcher.classify（Gemini function calling 一次出 意图+槽位，
+失败/非法回退关键词）→ 选中 Handler（槽位经 context.slots 传入）→ 调对应 provider
+（各自内部再做场景/工具路由）→ 统一 RouteResult`。
 
-### 8.5 分类器的两级兜底
+### 8.5 分类即抽槽：function calling 一次调用出 意图+槽位
 
-- **GeminiClassifier**：用 Gemini 按 description 选意图，鲁棒、能理解口语。
+- **GeminiClassifier**：把每个意图编译成一个 function 声明（`description` 即函数
+  说明、handler 声明的 `SlotSpec` 即参数 schema），用 Gemini function calling
+  （`mode=ANY`，强制选一个函数）**一次调用**同时得到意图与槽位——相比"先分类、
+  命中后再单独调一次 LLM 抽槽位"的两段式，延迟与调用成本各省一半（实测稳态
+  分类+抽槽 ~1s，两段式 ~2.5s）。分类器只保证槽位**类型**正确，业务范围
+  （如条数 1..50）由 handler 校验。
 - **KeywordClassifier**：零依赖关键词规则；当 Gemini 不可用或输出非法 id 时回退，
-  保证离线/降级场景仍可用。
+  保证离线/降级场景仍可用。它只出意图不出槽位——所以**槽位契约是尽力而为**：
+  handler 拿到的 `context.slots` 可能为空，必须能只凭 query 用自己的确定性解析
+  （正则清洗等）兜底。这条契约写在 `routing/handler.py` 的模块 docstring。
 
 闲聊兜底（`ChitchatHandler`）开启了 **Google Search grounding**：请求里挂上
 `tools:[{"google_search":{}}]`，**是否真去联网由模型自行判断**——"1+1等于几"不会触发，
@@ -374,7 +383,8 @@ TENCENT_NEWS_CLI=node C:\Users\<you>\AppData\Roaming\npm\node_modules\@tencentne
 
 ### 8.8 高德后端切换（REST / A2A）
 
-高德对上层只暴露 `MapService.ask(query, location) -> MapResult` 一个接口，`AmapHandler` 只依赖它。
+高德对上层只暴露 `MapService.ask(query, location, preparsed) -> MapResult` 一个接口，`AmapHandler` 只依赖它
+（`preparsed`：意图分类随槽位抽出的 `MapQuery`，REST 后端直接用、跳过内部解析；a2a 忽略）。
 两种实现可经 `AMAP_BACKEND` 自由切换、对比，无需改 handler/分流层：
 
 | 取值 | 实现 | 特点 |
@@ -388,12 +398,13 @@ AMAP_BACKEND=       # 留空=rest（默认）；填 a2a 切回旧实现做对比
 
 切换只动这一个 env，两套实现都在 `amap_client/` 里保留，`build_service` 按配置装配。
 
-REST 后端的自然语言理解靠注入的 `QueryParser`（接口在 `amap_client/parser.py`）：
-默认 `NaiveQueryParser`（整句当关键词、仅默认坐标）；分流层注入的
-`GeminiMapQueryParser`（`routing/handlers/amap.py`）用 Gemini 把"深圳万科云城附近好吃的推荐"
-拆成 `keywords=美食 / near=深圳万科云城 / city=深圳`，先把地标定位成坐标，再据此周边搜——
-这样 REST 后端也能正确处理"给定地址"，而非只会用默认坐标。`amap_client` 不依赖 Gemini，
-解析能力经接口注入。
+REST 后端需要把"深圳万科云城附近好吃的推荐"拆成 `keywords=美食 / near=深圳万科云城 /
+city=深圳`（先把地标定位成坐标，再据此周边搜）。主路径：这三个槽位由 `AmapHandler.slots`
+声明，意图分类的 function calling **一次**顺带抽出（零额外 LLM 调用），经 `preparsed`
+直通 REST 实现。降级路径（槽位为空，如关键词兜底分类）：走注入的 `QueryParser`
+（接口在 `amap_client/parser.py`）——分流层注入 `GeminiMapQueryParser`
+（`routing/handlers/amap.py`，提示词由同一份 SlotSpec 生成），单独用时默认
+`NaiveQueryParser`（整句当关键词）。`amap_client` 不依赖 Gemini，解析能力经接口注入。
 
 ### 8.9 呈现层（UI）与分流层解耦
 

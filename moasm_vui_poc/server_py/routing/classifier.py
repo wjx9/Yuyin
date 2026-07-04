@@ -1,27 +1,41 @@
 """意图分类器。
 
-IntentClassifier 是抽象：输入 query + 当前已注册的意图列表(IntentSpec)，输出意图 id。
-关键点：意图列表是**传进来的**（由 Dispatcher 从已注册 handler 动态收集），分类器自身
-不写死任何业务意图——所以新增能力无需改分类器。
+IntentClassifier 是抽象：输入 query + 当前已注册的意图列表(IntentSpec)，输出 Route
+（意图 id + 顺带抽出的槽位）。关键点：意图列表是**传进来的**（由 Dispatcher 从已
+注册 handler 动态收集），分类器自身不写死任何业务意图——所以新增能力无需改分类器。
 
-- GeminiClassifier：用 LLM 分类，鲁棒，提示词由意图列表动态拼装。
-- KeywordClassifier：零依赖兜底；Gemini 不可用/输出非法时回退。
+- GeminiClassifier：把每个意图编译成一个 function 声明（description 即函数说明、
+  handler 声明的 SlotSpec 即参数 schema），用 Gemini function calling（mode=ANY，
+  强制选一个函数）**一次调用**同时得到意图与槽位。相比"先分类、命中后再单独调一次
+  LLM 抽槽位"的两段式，延迟与调用成本各省一半。
+- KeywordClassifier：零依赖兜底；Gemini 不可用/输出非法时回退。只出意图不出槽位
+  （槽位缺失由各 handler 的确定性解析兜底，见 handler.py 的槽位契约）。
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
 
 from .gemini import GeminiClient, GeminiError
-from .handler import IntentSpec
+from .handler import IntentSpec, SlotSpec
 
 _log = logging.getLogger("routing.classifier")
 
 
+@dataclass(frozen=True)
+class Route:
+    """一次分类的结果：意图 + 槽位（可能为空 dict）。"""
+
+    intent: str
+    slots: dict[str, Any] = field(default_factory=dict)
+
+
 class IntentClassifier(ABC):
     @abstractmethod
-    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> str:
+    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> Route:
         raise NotImplementedError
 
 
@@ -42,55 +56,91 @@ class KeywordClassifier(IntentClassifier):
         ("tencent_hot_news", ("新闻", "头条", "大新闻", "热点", "时事", "最近发生")),
     ]
 
-    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> str:
+    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> Route:
         ids = {s.id for s in intents}
         for intent_id, keywords in self._RULES:
             if intent_id in ids:
                 hit = next((k for k in keywords if k in query), None)
                 if hit:
                     _log.debug("关键词分类命中 %r（关键词=%r）", intent_id, hit)
-                    return intent_id
+                    return Route(intent_id)
         _log.debug("关键词无命中，回退默认 %r", default)
-        return default
+        return Route(default)
 
 
 class GeminiClassifier(IntentClassifier):
+    """function calling 分类器：一次调用出 意图+槽位；失败回退 KeywordClassifier。"""
+
     def __init__(self, gemini: GeminiClient, fallback: IntentClassifier | None = None):
         self._gemini = gemini
         self._fallback = fallback or KeywordClassifier()
 
-    _SYSTEM = "你是一个意图分类器。只输出一个意图 id，不要任何解释、标点或多余文字。"
-
-    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> str:
+    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> Route:
         _log.debug("候选意图: %s", [s.id for s in intents])
-        prompt = self._build_prompt(query, intents, default)
         try:
-            raw = self._gemini.generate(prompt, system=self._SYSTEM, temperature=0.0)
+            call = self._gemini.choose_function(
+                query,
+                declarations=[_declaration(s) for s in intents],
+                system=self._system(default),
+                temperature=0.0,
+            )
         except GeminiError as e:
             _log.warning("Gemini 分类失败(%s)，回退关键词分类器", e)
             return self._fallback.classify(query, intents, default=default)
 
-        _log.debug("Gemini 原始输出: %r", raw)
-        ids = {s.id for s in intents}
-        choice = raw.strip().splitlines()[0].strip().strip("`\"' .").lower() if raw else ""
-        if choice in ids:
-            return choice
-        for i in ids:  # 容错：输出里包含某个 id
-            if i in raw:
-                _log.debug("Gemini 输出含合法 id %r（非精确匹配）", i)
-                return i
-        _log.warning("Gemini 输出 %r 非合法意图，回退关键词分类器", raw)
-        return self._fallback.classify(query, intents, default=default)
+        by_id = {s.id: s for s in intents}
+        if call is None or call.name not in by_id:
+            # mode=ANY 下极少发生（模型没回 functionCall / 编了个不存在的函数名）
+            _log.warning("Gemini 未返回合法意图(%r)，回退关键词分类器", call)
+            return self._fallback.classify(query, intents, default=default)
+
+        slots = _clean_slots(by_id[call.name].slots, call.args)
+        _log.debug("Gemini 分类: intent=%r slots=%r (原始 args=%r)", call.name, slots, call.args)
+        return Route(call.name, slots)
 
     @staticmethod
-    def _build_prompt(query: str, intents: list[IntentSpec], default: str) -> str:
-        lines = "\n".join(f"- {s.id}: {s.description}" for s in intents)
+    def _system(default: str) -> str:
         return (
-            "你是意图路由器。为用户输入选择一个意图 id，只输出该 id，不要任何解释。\n"
+            "你是语音助手的意图路由器。每个函数代表一个技能，为用户输入选择且只选择"
+            "一个函数，并从输入里抽取该函数的参数。\n"
             "判定规则：\n"
-            f"1. 只有当用户输入【明确且完整】地属于某个任务意图时，才选该意图；\n"
-            f"2. 若输入含糊、自相矛盾、玩笑、或无法明确归类，一律选择兜底意图 \"{default}\"；\n"
-            "3. 不要因为出现了某个关键词（如\"单号\"）就强行归类，要看整句的真实诉求。\n"
-            f"可选意图：\n{lines}\n\n"
-            f"用户输入：{query}\n意图id："
+            "1. 只有当用户输入【明确且完整】地属于某个技能时，才选该技能；\n"
+            f"2. 若输入含糊、自相矛盾、玩笑、或无法明确归类，一律选择兜底技能 \"{default}\"；\n"
+            "3. 不要因为出现了某个关键词（如\"单号\"）就强行归类，要看整句的真实诉求；\n"
+            "4. 参数只填用户明确表达了的信息，绝不编造；没说到的参数不要填。"
         )
+
+
+def _declaration(spec: IntentSpec) -> dict:
+    """IntentSpec -> Gemini functionDeclaration。无槽位的意图不带 parameters。"""
+    decl: dict = {"name": spec.id, "description": spec.description}
+    if spec.slots:
+        decl["parameters"] = {
+            "type": "object",
+            "properties": {
+                s.name: {"type": s.type, "description": s.description} for s in spec.slots
+            },
+        }
+    return decl
+
+
+def _clean_slots(declared: tuple[SlotSpec, ...], args: dict) -> dict[str, Any]:
+    """把模型返回的 args 净化成声明的槽位：丢未声明的键，按声明类型收敛值。
+
+    只保证类型正确（str 非空 / int 整数），业务范围（如条数 1..50）由 handler 校验。
+    """
+    cleaned: dict[str, Any] = {}
+    for spec in declared:
+        v = args.get(spec.name)
+        if spec.type == "string":
+            if isinstance(v, str) and v.strip():
+                cleaned[spec.name] = v.strip()
+        elif spec.type == "integer":
+            # JSON 数字可能解析为 float（5.0）；bool 是 int 子类，须显式排除
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, int):
+                cleaned[spec.name] = v
+            elif isinstance(v, float) and v.is_integer():
+                cleaned[spec.name] = int(v)
+    return cleaned

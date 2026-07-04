@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 
-from .classifier import IntentClassifier
+from .classifier import IntentClassifier, Route
 from .handler import Handler, IntentSpec, RouteContext, RouteResult
 
 _log = logging.getLogger("routing.dispatcher")
@@ -50,7 +50,7 @@ class Dispatcher:
     def _specs_for(self, platform: str) -> list[IntentSpec]:
         return [h.spec() for h in self._handlers.values() if self._visible(h, platform)]
 
-    def classify(self, query: str, platform: str = "pc") -> str:
+    def classify(self, query: str, platform: str = "pc") -> Route:
         return self._classifier.classify(query, self._specs_for(platform), default=self._default)
 
     def dispatch(self, query: str, context: RouteContext | None = None) -> RouteResult:
@@ -58,9 +58,10 @@ class Dispatcher:
         _log.info("收到 query: %r (platform=%s)", query, context.platform)
 
         t0 = time.perf_counter()
-        intent = self.classify(query, context.platform)
+        route = self.classify(query, context.platform)
         classify_ms = (time.perf_counter() - t0) * 1000
 
+        intent, slots = route.intent, route.slots
         handler = self._handlers.get(intent)
         # 未注册，或该端不可见（PC-only 能力被 mobile 请求命中）——都回退默认。
         # 正常路径下分类器压根看不到隐藏能力，这里是防御性兜底（如关键词兜底分类器命中）。
@@ -68,10 +69,13 @@ class Dispatcher:
             _log.warning("意图 %r 对 platform=%s 不可用，回退默认 %r", intent, context.platform, self._default)
             handler = self._handlers[self._default]
             intent = self._default
+            slots = {}  # 槽位是按原意图抽的，回退后不再适用
+        context.slots = dict(slots)
         _log.info(
-            "路由 -> 技能 %r (%s)，分类耗时 %.0fms",
+            "路由 -> 技能 %r (%s)，槽位 %s，分类耗时 %.0fms",
             intent,
             type(handler).__name__,
+            slots or "{}",
             classify_ms,
         )
 

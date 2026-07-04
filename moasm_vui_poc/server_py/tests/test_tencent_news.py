@@ -15,7 +15,6 @@ from tencent_news_client.errors import TencentNewsError
 from tencent_news_client.models import NewsResult
 from tencent_news_client.service import NewsService
 
-from routing.gemini import GeminiError
 from routing.handler import RouteContext
 from routing.handlers import (
     TencentFactCheckHandler,
@@ -23,12 +22,7 @@ from routing.handlers import (
     TencentNewsSearchHandler,
     TencentWeatherHandler,
 )
-from routing.handlers.tencent_news import (
-    GeminiNewsQueryParser,
-    NewsQuery,
-    _extract_count,
-    _search_keyword,
-)
+from routing.handlers.tencent_news import _extract_count, _search_keyword
 
 
 class FakeCompleted:
@@ -147,8 +141,8 @@ class FakeCli:
         return self._stdout
 
 
-def _ctx():
-    return RouteContext(union_id=None, location=None)
+def _ctx(slots=None):
+    return RouteContext(union_id=None, location=None, slots=slots or {})
 
 
 def test_hot_handler_calls_hot_no_count():
@@ -199,65 +193,49 @@ def test_search_keyword_fallback_cleaning(query, expected):
     assert _search_keyword(query) == expected
 
 
-def test_search_handler_without_parser_uses_regex_cleaning():
+# 槽位由分类器 function calling 顺带抽出、经 context.slots 传入（见 handler.py 契约）。
+# 这里覆盖两条路径：槽位齐全（主路径）与槽位缺失（正则兜底）。
+
+def test_search_handler_uses_slots_from_context():
     cli = FakeCli()
     h = TencentNewsSearchHandler(NewsService(cli))
-    h.handle("看下深圳今天新闻top5", _ctx())
-    sub, args = cli.calls[0]
-    assert sub == "search"
-    assert args == ["深圳", "--limit", "5"]
+    h.handle("我想看科技新闻，来5条", _ctx(slots={"keyword": "科技", "limit": 5}))
+    assert cli.calls == [("search", ["科技", "--limit", "5"])]
     assert h.intent == "tencent_news_search"
 
 
-def test_search_handler_uses_parser_result():
+def test_search_handler_declares_slot_schema():
+    slot_names = [s.name for s in TencentNewsSearchHandler.slots]
+    assert slot_names == ["keyword", "limit"]
+
+
+def test_search_handler_falls_back_to_regex_without_slots():
     cli = FakeCli()
-
-    class StubParser:
-        def parse(self, query):
-            return NewsQuery(keyword="科技", limit=5)
-
-    h = TencentNewsSearchHandler(NewsService(cli), parser=StubParser())
-    h.handle("我想看科技新闻，来5条", _ctx())
-    assert cli.calls == [("search", ["科技", "--limit", "5"])]
+    h = TencentNewsSearchHandler(NewsService(cli))
+    h.handle("看下深圳今天新闻top5", _ctx())
+    assert cli.calls == [("search", ["深圳", "--limit", "5"])]
 
 
-# ---------- GeminiNewsQueryParser ----------
-
-class FakeGemini:
-    def __init__(self, raw="", error=None):
-        self.raw = raw
-        self.error = error
-
-    def generate(self, prompt, **kwargs):
-        if self.error:
-            raise self.error
-        return self.raw
+def test_search_handler_rechecks_out_of_range_slot_limit():
+    # 分类器只保证类型，业务范围（1..50）在 handler 校验：越界弃用，正则重抠
+    cli = FakeCli()
+    h = TencentNewsSearchHandler(NewsService(cli))
+    h.handle("来5条美国新闻", _ctx(slots={"keyword": "美国", "limit": 999}))
+    assert cli.calls == [("search", ["美国", "--limit", "5"])]
 
 
-def test_parser_extracts_keyword_and_limit():
-    p = GeminiNewsQueryParser(FakeGemini('{"keyword": "科技", "limit": 5}'))
-    assert p.parse("我想看科技新闻top5") == NewsQuery("科技", 5)
+def test_hot_handler_uses_slot_limit():
+    cli = FakeCli()
+    h = TencentHotNewsHandler(NewsService(cli))
+    h.handle("来3条大新闻", _ctx(slots={"limit": 3}))
+    assert cli.calls == [("hot", ["--limit", "3"])]
 
 
-def test_parser_tolerates_code_fence_and_null_limit():
-    p = GeminiNewsQueryParser(FakeGemini('```json\n{"keyword": "深圳", "limit": null}\n```'))
-    assert p.parse("看看深圳的新闻") == NewsQuery("深圳", None)
-
-
-def test_parser_rechecks_bad_limit_with_regex():
-    # LLM 给出超范围 limit → 用正则从原句重新抠条数
-    p = GeminiNewsQueryParser(FakeGemini('{"keyword": "美国", "limit": 999}'))
-    assert p.parse("来5条美国新闻") == NewsQuery("美国", 5)
-
-
-def test_parser_falls_back_on_garbage_output():
-    p = GeminiNewsQueryParser(FakeGemini("抱歉我不明白"))
-    assert p.parse("我想看科技新闻") == NewsQuery("科技", None)
-
-
-def test_parser_falls_back_on_gemini_error():
-    p = GeminiNewsQueryParser(FakeGemini(error=GeminiError("down")))
-    assert p.parse("来点美国新闻") == NewsQuery("美国", None)
+def test_weather_handler_uses_slot_city():
+    cli = FakeCli()
+    h = TencentWeatherHandler(NewsService(cli))
+    h.handle("那边明天下雨吗", _ctx(slots={"city": "北京"}))
+    assert cli.calls == [("weather", ["--adcode", "110000"])]
 
 
 def test_weather_handler_maps_city_to_adcode():

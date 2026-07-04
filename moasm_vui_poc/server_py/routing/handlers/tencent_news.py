@@ -13,10 +13,10 @@
 
 search 的检索词质量决定结果质量：
     CLI 的 search 是全文关键词检索（无频道/分类参数，实测确认），把"我想看
-    科技新闻"整句喂进去会命中大量字面噪声。因此 search handler 先用
-    GeminiNewsQueryParser 做槽位抽取（检索词 + 条数），LLM 不可用时退回
-    确定性正则清洗。与高德 GeminiMapQueryParser 同一模式：解析器放 routing
-    层，tencent_news_client 不反向依赖 Gemini。
+    科技新闻"整句喂进去会命中大量字面噪声。检索词与条数由 handler 声明为
+    slots（见 Handler.slots），分类器做 function calling 时**一次**顺带抽出，
+    不再单独调一次 LLM 解析。context.slots 为空（关键词兜底分类等）时退回
+    本文件的确定性正则清洗。
 """
 
 from __future__ import annotations
@@ -28,8 +28,7 @@ from dataclasses import dataclass
 from tencent_news_client.errors import TencentNewsError
 from tencent_news_client.service import NewsService
 
-from ..gemini import GeminiClient, GeminiError, loads_json_loose
-from ..handler import Handler, RouteContext, RouteResult
+from ..handler import Handler, RouteContext, RouteResult, SlotSpec
 
 _log = logging.getLogger(__name__)
 
@@ -87,43 +86,24 @@ class NewsQuery:
     limit: int | None = None
 
 
-def _fallback_query(query: str) -> NewsQuery:
-    return NewsQuery(keyword=_search_keyword(query), limit=_extract_count(query))
+def _slot_limit(context: RouteContext, query: str) -> int | None:
+    """条数：优先用分类器抽的 limit 槽位（业务范围校验在此），缺失/越界退回正则。"""
+    limit = context.slots.get("limit")
+    if isinstance(limit, int) and 1 <= limit <= _MAX_COUNT:
+        return limit
+    return _extract_count(query)
 
 
-_PARSER_SYSTEM = """你是腾讯新闻搜索的查询解析器。用户想看某类新闻，把诉求拆成 JSON，字段：
-  keyword: 喂给新闻搜索引擎的检索词，必须简短：
-    - 地区新闻取地区名："看看深圳的新闻"→"深圳"，"来点美国新闻"→"美国"
-    - 分类新闻取品类核心词："我想看科技新闻"→"科技"，"有什么财经新闻"→"财经"
-    - 主题/人物/事件取对象本身："关于苹果公司的新闻"→"苹果公司"
-    - 地区+分类同时出现则都保留："美国的科技新闻"→"美国 科技"
-    - 不要带"新闻/报道/我想看/来点/top5"这类修饰词。
-  limit: 用户要求的条数（整数）；没提就是 null。
-只输出一个 JSON 对象，不要解释，不要代码块。"""
+def _news_query(context: RouteContext, query: str) -> NewsQuery:
+    """槽位优先、正则兜底地拼出 NewsQuery（keyword 类型已由分类器净化为非空 str）。"""
+    keyword = context.slots.get("keyword") or _search_keyword(query)
+    return NewsQuery(keyword=keyword, limit=_slot_limit(context, query))
 
 
-class GeminiNewsQueryParser:
-    """用 Gemini 把"想看什么新闻"拆成 NewsQuery；失败时退回正则清洗。"""
-
-    def __init__(self, gemini: GeminiClient):
-        self._gemini = gemini
-
-    def parse(self, query: str) -> NewsQuery:
-        try:
-            raw = self._gemini.generate(query, system=_PARSER_SYSTEM, temperature=0.0)
-        except GeminiError as e:
-            _log.warning("新闻查询解析失败，退回正则清洗: %s", e)
-            return _fallback_query(query)
-        data = loads_json_loose(raw)
-        if not isinstance(data, dict):
-            _log.warning("新闻查询解析输出非 JSON(%r)，退回正则清洗", raw[:80])
-            return _fallback_query(query)
-        keyword = str(data.get("keyword") or "").strip() or _search_keyword(query)
-        limit = data.get("limit")
-        if not (isinstance(limit, int) and 1 <= limit <= _MAX_COUNT):
-            limit = _extract_count(query)  # LLM 没给/给错时用正则兜底
-        _log.debug("新闻查询解析: keyword=%r limit=%r", keyword, limit)
-        return NewsQuery(keyword=keyword, limit=limit)
+_LIMIT_SLOT = SlotSpec(
+    "limit", "integer",
+    "用户要求的新闻条数，如'来5条'→5、'top3'→3；用户没提条数就不要填",
+)
 
 
 # weather 只认 --adcode（无城市名参数），故自然语言城市名要先转 adcode。
@@ -158,13 +138,14 @@ class TencentHotNewsHandler(Handler):
         "查询全国综合热点新闻榜/今日头条：'有什么大新闻'、'最近发生了什么'这类"
         "**没有点名任何地区/分类/主题**的泛问；点名了具体对象的新闻走 tencent_news_search"
     )
+    slots = (_LIMIT_SLOT,)
 
     def __init__(self, service: NewsService):
         self._service = service
 
     def handle(self, query: str, context: RouteContext) -> RouteResult:
         try:
-            result = self._service.hot(limit=_extract_count(query))
+            result = self._service.hot(limit=_slot_limit(context, query))
         except TencentNewsError as e:
             return RouteResult(text=f"热点新闻获取失败：{e}", intent=self.intent)
         return RouteResult(text=result.text, data=result, intent=self.intent)
@@ -180,13 +161,24 @@ class TencentNewsSearchHandler(Handler):
         "注意：仅限'新闻/报道/动态/发生了什么'；若用户要的是某个实时数值"
         "（股价、汇率、币价、油价、商品价格等），不要走这里，交给闲聊联网查询"
     )
+    slots = (
+        SlotSpec(
+            "keyword", "string",
+            "喂给新闻搜索引擎的简短检索词，只留检索对象本身："
+            "地区新闻取地区名（'看看深圳的新闻'→'深圳'、'来点美国新闻'→'美国'）；"
+            "分类新闻取品类核心词（'我想看科技新闻'→'科技'）；"
+            "主题/人物/事件取对象本身（'关于苹果公司的新闻'→'苹果公司'）；"
+            "地区+分类同时出现则空格连接（'美国的科技新闻'→'美国 科技'）；"
+            "不要带'新闻/报道/我想看/来点/top5'这类修饰词",
+        ),
+        _LIMIT_SLOT,
+    )
 
-    def __init__(self, service: NewsService, parser: GeminiNewsQueryParser | None = None):
+    def __init__(self, service: NewsService):
         self._service = service
-        self._parser = parser  # None 时用正则清洗（测试/降级路径）
 
     def handle(self, query: str, context: RouteContext) -> RouteResult:
-        q = self._parser.parse(query) if self._parser else _fallback_query(query)
+        q = _news_query(context, query)
         _log.info("新闻搜索: %r -> keyword=%r limit=%r", query, q.keyword, q.limit)
         try:
             result = self._service.search(q.keyword, limit=q.limit)
@@ -198,14 +190,23 @@ class TencentNewsSearchHandler(Handler):
 class TencentWeatherHandler(Handler):
     intent = "tencent_weather"
     description = "查询天气预报：今天/未来几天某地是否下雨、气温、风力、空气质量、预警"
+    slots = (
+        SlotSpec(
+            "city", "string",
+            "用户点名的城市名（'深圳明天下雨吗'→'深圳'）；没点名城市就不要填",
+        ),
+    )
 
     def __init__(self, service: NewsService):
         self._service = service
 
     def handle(self, query: str, context: RouteContext) -> RouteResult:
-        # 识别 query 里的城市 → adcode；识别不到则 None，由 service 用默认兜底。
+        # 城市：优先用分类器抽的 city 槽位（仍走 adcode 表转码），缺失/不识别时
+        # 退回在整句里扫城市名；都不中则 None，由 service 用默认定位兜底。
+        city = context.slots.get("city")
+        adcode = (_extract_adcode(city) if city else None) or _extract_adcode(query)
         try:
-            result = self._service.weather(adcode=_extract_adcode(query))
+            result = self._service.weather(adcode=adcode)
         except TencentNewsError as e:
             return RouteResult(text=f"天气查询失败：{e}", intent=self.intent)
         return RouteResult(text=result.text, data=result, intent=self.intent)

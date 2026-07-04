@@ -13,14 +13,20 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from .client import AmapClient
-from .models import MapResult, build_message
+from .models import MapQuery, MapResult, build_message
 
 
 class MapService(ABC):
-    """地图查询业务接口：自然语言进，MapResult 出。"""
+    """地图查询业务接口：自然语言进，MapResult 出。
+
+    preparsed：上层若已把 query 拆好槽位（如意图分类时经 function calling 顺带
+    抽出），可直接给 MapQuery，实现方跳过自己的解析；不给则各实现自行解析。
+    """
 
     @abstractmethod
-    def ask(self, query: str, *, location: str | None = None) -> MapResult:
+    def ask(
+        self, query: str, *, location: str | None = None, preparsed: MapQuery | None = None
+    ) -> MapResult:
         raise NotImplementedError
 
 
@@ -32,6 +38,9 @@ class A2aMapService(MapService):
         # agent 必须拿到 user_loc 才会检索；无显式位置时退回默认位置（见 config）。
         self._default_location = default_location
 
-    def ask(self, query: str, *, location: str | None = None) -> MapResult:
+    def ask(
+        self, query: str, *, location: str | None = None, preparsed: MapQuery | None = None
+    ) -> MapResult:
+        # preparsed 不适用：云端 agent 只收整句，自己做语义拆解。
         message = build_message(query, location=location or self._default_location)
         return self._client.send(message)
