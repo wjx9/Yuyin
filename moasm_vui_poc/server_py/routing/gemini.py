@@ -82,14 +82,8 @@ class GeminiClient:
     ) -> GeminiAnswer:
         """生成并返回 GeminiAnswer。grounded=True 时挂上 Google Search 工具，
         模型按需联网（简单问题不会真搜），并回传来源。"""
-        contents: list[dict] = []
-        # history 为 (用户输入, 模型回复) 的时间正序列表，展开成 Gemini 的多轮 contents
-        for user_text, model_text in history or []:
-            contents.append({"role": "user", "parts": [{"text": user_text}]})
-            contents.append({"role": "model", "parts": [{"text": model_text}]})
-        contents.append({"role": "user", "parts": [{"text": prompt}]})
         body: dict = {
-            "contents": contents,
+            "contents": _build_contents(prompt, history),
             "generationConfig": {"temperature": temperature},
         }
         if system:
@@ -107,17 +101,20 @@ class GeminiClient:
         declarations: list[dict],
         system: str | None = None,
         temperature: float = 0.0,
+        history: list[tuple[str, str]] | None = None,
     ) -> FunctionCall | None:
         """Function calling：让模型从 declarations 中强制选一个函数并填参数。
 
         declarations 是 Gemini functionDeclarations 原始格式的 dict 列表
         （{"name", "description", 可选 "parameters"}），由调用方拼装。
+        history 同 answer()：(用户输入, 模型回复) 时间正序列表，模型可据此理解
+        跟进式输入（"再来3条呢"）；要不要带、带多少由调用方裁剪。
         mode=ANY 强制模型必须调用其中一个函数（而非输出自由文本），因此
         "一次调用同时得到意图(函数名)+槽位(参数)"。极少数情况下模型仍可能
         不回 functionCall，此时返回 None，由调用方兜底。
         """
         body: dict = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "contents": _build_contents(prompt, history),
             "generationConfig": {"temperature": temperature},
             "tools": [{"functionDeclarations": declarations}],
             "toolConfig": {"functionCallingConfig": {"mode": "ANY"}},
@@ -146,6 +143,16 @@ class GeminiClient:
             return resp.json()["candidates"][0]
         except (KeyError, IndexError, ValueError):
             return {}
+
+
+def _build_contents(prompt: str, history: list[tuple[str, str]] | None) -> list[dict]:
+    """把 (用户输入, 模型回复) 时间正序的 history 展开成多轮 contents，本轮 prompt 收尾。"""
+    contents: list[dict] = []
+    for user_text, model_text in history or []:
+        contents.append({"role": "user", "parts": [{"text": user_text}]})
+        contents.append({"role": "model", "parts": [{"text": model_text}]})
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+    return contents
 
 
 def loads_json_loose(text: str):

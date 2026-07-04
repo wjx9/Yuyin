@@ -11,6 +11,7 @@ import time
 
 from .classifier import IntentClassifier, Route
 from .handler import Handler, IntentSpec, RouteContext, RouteResult
+from .history import Turn
 
 _log = logging.getLogger("routing.dispatcher")
 
@@ -50,15 +51,18 @@ class Dispatcher:
     def _specs_for(self, platform: str) -> list[IntentSpec]:
         return [h.spec() for h in self._handlers.values() if self._visible(h, platform)]
 
-    def classify(self, query: str, platform: str = "pc") -> Route:
-        return self._classifier.classify(query, self._specs_for(platform), default=self._default)
+    def classify(self, query: str, platform: str = "pc", history: list[Turn] | None = None) -> Route:
+        return self._classifier.classify(
+            query, self._specs_for(platform), default=self._default, history=history
+        )
 
     def dispatch(self, query: str, context: RouteContext | None = None) -> RouteResult:
         context = context or RouteContext()
         _log.info("收到 query: %r (platform=%s)", query, context.platform)
 
         t0 = time.perf_counter()
-        route = self.classify(query, context.platform)
+        # 带上会话历史：跟进式输入（"再来3条呢"）靠它继承上文的意图与槽位
+        route = self.classify(query, context.platform, context.history)
         classify_ms = (time.perf_counter() - t0) * 1000
 
         intent, slots = route.intent, route.slots

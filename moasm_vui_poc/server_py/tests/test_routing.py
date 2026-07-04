@@ -46,10 +46,11 @@ class FakeGemini:
             raise GeminiError("down")
         return GeminiAnswer(text=self._reply, sources=list(self._sources))
 
-    def choose_function(self, prompt, *, declarations, system=None, temperature=0.0):
+    def choose_function(self, prompt, *, declarations, system=None, temperature=0.0, history=None):
         self.last_prompt = prompt
         self.last_system = system
         self.last_declarations = declarations
+        self.last_history = history
         if self._raise:
             raise GeminiError("down")
         return self._call
@@ -142,6 +143,23 @@ def test_gemini_system_prompt_carries_default_for_fallback():
     assert "chitchat" in g.last_system and "兜底" in g.last_system
 
 
+def test_gemini_classifier_trims_history():
+    from routing.history import Turn
+
+    g = FakeGemini(call="news")
+    turns = [Turn(f"第{i}问", "答" * 500) for i in range(5)]
+    GeminiClassifier(g).classify("再来3条呢", SPECS, default="chitchat", history=turns)
+    # 只带最近 3 轮，回复截断到 200 字——意图继承要的是"刚聊过什么"，不是全量对话
+    assert [q for q, _ in g.last_history] == ["第2问", "第3问", "第4问"]
+    assert all(len(r) == 200 for _, r in g.last_history)
+
+
+def test_gemini_classifier_without_history_passes_none():
+    g = FakeGemini(call="chitchat")
+    GeminiClassifier(g).classify("你好", SPECS, default="chitchat")
+    assert g.last_history is None
+
+
 def test_gemini_classifier_falls_back_on_error():
     g = FakeGemini(raise_error=True)
     c = GeminiClassifier(g, fallback=KeywordClassifier())
@@ -181,6 +199,15 @@ def test_dispatcher_collects_intents_for_classifier():
     assert decls["amap"]["description"] == "地图周边"
 
 
+def test_dispatcher_forwards_context_history_to_classifier():
+    from routing.history import Turn
+
+    g = FakeGemini(call="chitchat")
+    d = Dispatcher([EchoHandler("chitchat")], GeminiClassifier(g), default_intent="chitchat")
+    d.dispatch("再来3条呢", RouteContext(history=[Turn("来3条美国新闻", "【搜索「美国」】…")]))
+    assert g.last_history == [("来3条美国新闻", "【搜索「美国」】…")]
+
+
 def test_dispatcher_passes_slots_to_handler_context():
     seen = {}
 
@@ -204,7 +231,7 @@ def test_dispatcher_clears_slots_when_falling_back():
     from routing.classifier import IntentClassifier
 
     class GhostClassifier(IntentClassifier):
-        def classify(self, query, intents, *, default):
+        def classify(self, query, intents, *, default, history=None):
             return Route("ghost_intent", {"keyword": "深圳"})  # 未注册的意图 + 残留槽位
 
     seen = {"marker": "not-touched"}
@@ -398,6 +425,20 @@ def test_gemini_choose_function_posts_declarations_and_parses_call():
     # mode=ANY：强制模型必须调用一个函数，一次拿到 意图+槽位
     assert sess.posted["toolConfig"] == {"functionCallingConfig": {"mode": "ANY"}}
     assert fc == FunctionCall("news", {"keyword": "深圳"})
+
+
+def test_gemini_choose_function_expands_history_into_contents():
+    sess = _RecordingSession()
+    GeminiClient("key", session=sess).choose_function(
+        "再来3条呢",
+        declarations=[{"name": "news", "description": "d"}],
+        history=[("来3条美国新闻", "【搜索「美国」】…")],
+    )
+    assert sess.posted_json["contents"] == [
+        {"role": "user", "parts": [{"text": "来3条美国新闻"}]},
+        {"role": "model", "parts": [{"text": "【搜索「美国」】…"}]},
+        {"role": "user", "parts": [{"text": "再来3条呢"}]},
+    ]
 
 
 def test_gemini_choose_function_returns_none_on_text_reply():

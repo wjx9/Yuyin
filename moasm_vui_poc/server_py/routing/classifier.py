@@ -8,8 +8,10 @@ IntentClassifier 是抽象：输入 query + 当前已注册的意图列表(Inten
   handler 声明的 SlotSpec 即参数 schema），用 Gemini function calling（mode=ANY，
   强制选一个函数）**一次调用**同时得到意图与槽位。相比"先分类、命中后再单独调一次
   LLM 抽槽位"的两段式，延迟与调用成本各省一半。
-- KeywordClassifier：零依赖兜底；Gemini 不可用/输出非法时回退。只出意图不出槽位
-  （槽位缺失由各 handler 的确定性解析兜底，见 handler.py 的槽位契约）。
+  分类还带上最近几轮对话（裁剪过的 history），让跟进式输入（"来3条美国新闻"→
+  "再来3条呢"）能继承上文的意图与槽位——即商用语音助手的多轮 intent 继承。
+- KeywordClassifier：零依赖兜底；Gemini 不可用/输出非法时回退。只出意图不出槽位、
+  不看上下文（槽位缺失由各 handler 的确定性解析兜底，见 handler.py 的槽位契约）。
 """
 
 from __future__ import annotations
@@ -21,8 +23,15 @@ from typing import Any
 
 from .gemini import GeminiClient, GeminiError
 from .handler import IntentSpec, SlotSpec
+from .history import Turn
 
 _log = logging.getLogger("routing.classifier")
+
+# 喂给分类器的上下文裁剪：意图继承只需要"刚聊过什么"，不需要全量对话。
+# 轮数多/回复长只会稀释信号、拖慢分类（token 线性进延迟），故取最近几轮、
+# 回复截头部——头部通常是"【腾讯新闻 - 搜索「美国」】"这类最能标识上轮意图的部分。
+_HISTORY_TURNS = 3
+_HISTORY_RESPONSE_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -35,7 +44,15 @@ class Route:
 
 class IntentClassifier(ABC):
     @abstractmethod
-    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> Route:
+    def classify(
+        self,
+        query: str,
+        intents: list[IntentSpec],
+        *,
+        default: str,
+        history: list[Turn] | None = None,
+    ) -> Route:
+        """history：本轮之前的对话（时间正序），供实现理解跟进式输入；可不消费。"""
         raise NotImplementedError
 
 
@@ -56,7 +73,15 @@ class KeywordClassifier(IntentClassifier):
         ("tencent_hot_news", ("新闻", "头条", "大新闻", "热点", "时事", "最近发生")),
     ]
 
-    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> Route:
+    def classify(
+        self,
+        query: str,
+        intents: list[IntentSpec],
+        *,
+        default: str,
+        history: list[Turn] | None = None,
+    ) -> Route:
+        # history 不消费：关键词规则做不了可靠的意图继承，装懂不如不懂
         ids = {s.id for s in intents}
         for intent_id, keywords in self._RULES:
             if intent_id in ids:
@@ -75,7 +100,14 @@ class GeminiClassifier(IntentClassifier):
         self._gemini = gemini
         self._fallback = fallback or KeywordClassifier()
 
-    def classify(self, query: str, intents: list[IntentSpec], *, default: str) -> Route:
+    def classify(
+        self,
+        query: str,
+        intents: list[IntentSpec],
+        *,
+        default: str,
+        history: list[Turn] | None = None,
+    ) -> Route:
         _log.debug("候选意图: %s", [s.id for s in intents])
         try:
             call = self._gemini.choose_function(
@@ -83,6 +115,7 @@ class GeminiClassifier(IntentClassifier):
                 declarations=[_declaration(s) for s in intents],
                 system=self._system(default),
                 temperature=0.0,
+                history=_trim_history(history),
             )
         except GeminiError as e:
             _log.warning("Gemini 分类失败(%s)，回退关键词分类器", e)
@@ -107,8 +140,21 @@ class GeminiClassifier(IntentClassifier):
             "1. 只有当用户输入【明确且完整】地属于某个技能时，才选该技能；\n"
             f"2. 若输入含糊、自相矛盾、玩笑、或无法明确归类，一律选择兜底技能 \"{default}\"；\n"
             "3. 不要因为出现了某个关键词（如\"单号\"）就强行归类，要看整句的真实诉求；\n"
-            "4. 参数只填用户明确表达了的信息，绝不编造；没说到的参数不要填。"
+            "4. 若本轮输入是对上文的跟进（\"再来3条呢\"、\"换成北京呢\"、\"那明天呢\"），"
+            "沿用上文的技能，并把省略的参数从上文继承过来（如上文在看美国新闻，"
+            "\"再来3条\"即 keyword=美国、limit=3）；本轮诉求完整时以本轮为准，不受上文干扰；\n"
+            "5. 参数只填用户在本轮或上文明确表达过的信息，绝不编造；未知的参数不要填。"
         )
+
+
+def _trim_history(history: list[Turn] | None) -> list[tuple[str, str]] | None:
+    """把对话历史裁剪成分类器要的形态：最近 _HISTORY_TURNS 轮，回复截断。"""
+    if not history:
+        return None
+    return [
+        (t.query, t.response[:_HISTORY_RESPONSE_CHARS])
+        for t in history[-_HISTORY_TURNS:]
+    ]
 
 
 def _declaration(spec: IntentSpec) -> dict:
