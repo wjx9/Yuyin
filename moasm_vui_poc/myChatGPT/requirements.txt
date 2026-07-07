@@ -1,0 +1,5 @@
+﻿Pillow>=12.0
+Pygments>=2.20
+requests>=2.32
+PyMuPDF>=1.27
+pyinstaller>=6.0
