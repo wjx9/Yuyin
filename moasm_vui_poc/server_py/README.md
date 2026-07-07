@@ -444,13 +444,21 @@ POST /chat
   请求体: { "query": "深圳万科云城附近好吃的", "session_id": "<客户端生成并固定>",
            "user_id": "可选，我方平台账号", "location": "经度,纬度 可选",
            "platform": "pc|mobile 可选，缺省 pc" }
-  响应  : { "text": "...", "intent": "amap", "session_id": "..." }
+  响应  : { "text": "...", "intent": "amap", "session_id": "...",
+           "data": { 可选，如音乐深链 }, "a2ui": [ 可选，A2UI v0.9 消息，见 a2ui/ ] }
   鉴权(可选): 请求头 Authorization: Bearer <SERVER_AUTH_TOKEN>
 ```
 
 `platform` 用于按端过滤能力：标了 `pc_only` 的 Handler（当前只有 `music_control`——它控的是**服务端本机 mpv**，对"点歌后用深链在手机上放"的移动端无意义）对 `mobile` 隐藏，既不进 `/health` 能力清单，`/chat` 也不会路由到它。`chat_app`（进程内）与 `client_py` 走默认 `pc`、能力不变；`client_flutter` 固定上报 `mobile`。细节见 `music163/docs/introduce.md`。
 
 phase 1 只下发 `text + intent`，结构化 `RouteResult.data`（POI/轨迹等）暂不序列化。
+
+**A2UI 卡片（`a2ui/` 包，服务端呈现层）**：命中可卡片化意图（新闻/天气/行程）且
+`platform=mobile` 时，把技能文本结果转成 A2UI v0.9 消息（`createSurface` +
+`updateComponents`，根组件恒为 `id="root"` 的 `Card`）随响应 `a2ui` 字段下发，
+由 client_flutter 的 genui 渲染成穿戴风格卡片（单绿/灰度/黑底，样式在客户端主题）。
+本层只产语义组件不带样式；新增卡片 = 在 `a2ui/cards.py` 注册 builder，routing 零改动。
+`text` 始终完整下发（TTS 与纯文本端不受影响）。
 
 **分层（`server/` 包，全部是加法）**
 

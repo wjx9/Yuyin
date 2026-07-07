@@ -139,6 +139,31 @@ def test_service_drops_non_dict_data():
     assert resp.data is None and "data" not in resp.to_dict()
 
 
+class _NewsDisp(FakeDispatcher):
+    """命中新闻意图的桩：a2ui 生成层按 intent+text 工作，无需真 CLI。"""
+
+    def dispatch(self, query, context):
+        self.calls.append({"query": query, "context": context})
+        return RouteResult(text="1. 标题：某新闻\n   来源: 某报", intent="tencent_news_search")
+
+
+def test_service_builds_a2ui_for_mobile():
+    resp = _service(_NewsDisp()).handle_chat(
+        ChatRequest(query="美国新闻", session_id="s1", platform="mobile")
+    )
+    assert resp.a2ui is not None
+    assert "createSurface" in resp.a2ui[0]
+    assert resp.to_dict()["a2ui"] == resp.a2ui
+
+
+def test_service_skips_a2ui_for_pc():
+    """纯文本端（pc）不产 a2ui：契约不变，也不浪费流量。"""
+    resp = _service(_NewsDisp()).handle_chat(
+        ChatRequest(query="美国新闻", session_id="s1", platform="pc")
+    )
+    assert resp.a2ui is None and "a2ui" not in resp.to_dict()
+
+
 def test_real_auth_provider_seam():
     """预留接口：自定义 CredentialProvider 即可替换 mock（将来接真鉴权）。"""
 

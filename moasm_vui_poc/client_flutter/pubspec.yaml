@@ -41,9 +41,14 @@ dependencies:
   provider: ^6.1.5+1
   uuid: ^4.5.3
   url_launcher: ^6.3.0 # step 3.1：用 orpheus:// 深链拉起网易云音乐 app
+  genui: ^0.9.2
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # A2UI 渲染测试跑真机（integration_test/）：genui 的传递依赖 jni/objective_c
+  # 带 native-assets 构建钩子，宿主机 flutter_tester 路径会卡死，设备管线正常。
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

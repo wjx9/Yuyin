@@ -56,6 +56,10 @@ class ChatTurn {
   /// 仅 assistant 且命中 music_play：可播放信息，气泡上给「用网易云音乐打开」按钮。
   final MusicInfo? music;
 
+  /// 仅 assistant：服务端下发的 A2UI 卡片消息（新闻/行程/天气等技能结果）。
+  /// 非空时气泡渲染卡片（由 a2ui 模块负责），text 仍用于 TTS 朗读。
+  final List<Map<String, dynamic>>? a2ui;
+
   const ChatTurn({
     required this.sender,
     required this.text,
@@ -63,6 +67,7 @@ class ChatTurn {
     this.pending = false,
     this.isError = false,
     this.music,
+    this.a2ui,
   });
 
   ChatTurn copyWith({String? text, String? intent, bool? pending, bool? isError, MusicInfo? music}) {
@@ -73,23 +78,27 @@ class ChatTurn {
       pending: pending ?? this.pending,
       isError: isError ?? this.isError,
       music: music ?? this.music,
+      a2ui: a2ui,
     );
   }
 }
 
-/// POST /chat 的响应：{ text, intent, session_id, data? }。
-/// data 目前仅音乐能力下发（供端侧拉起 app）；其余能力为 null。
+/// POST /chat 的响应：{ text, intent, session_id, data?, a2ui? }。
+/// data 目前仅音乐能力下发（供端侧拉起 app）；
+/// a2ui 是 A2UI v0.9 消息列表（服务端仅对 platform=mobile 且可卡片化的意图下发）。
 class ChatReply {
   final String text;
   final String intent;
   final String sessionId;
   final MusicInfo? music;
+  final List<Map<String, dynamic>>? a2ui;
 
   const ChatReply({
     required this.text,
     required this.intent,
     required this.sessionId,
     this.music,
+    this.a2ui,
   });
 
   factory ChatReply.fromJson(Map<String, dynamic> json) {
@@ -98,7 +107,18 @@ class ChatReply {
       intent: (json['intent'] ?? '') as String,
       sessionId: (json['session_id'] ?? '') as String,
       music: MusicInfo.tryFrom(json['data']),
+      a2ui: _a2uiFrom(json['a2ui']),
     );
+  }
+
+  /// 宽容解析 a2ui 段：非 List/元素非 Map 一律忽略（老服务端/异常数据不致崩）。
+  static List<Map<String, dynamic>>? _a2uiFrom(Object? raw) {
+    if (raw is! List) return null;
+    final msgs = raw
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
+    return msgs.isEmpty ? null : msgs;
   }
 }
 

@@ -82,19 +82,25 @@ class ChatRequest:
 
 @dataclass
 class ChatResponse:
-    """一轮对话响应：文本 + 命中意图 + 可选结构化 data。
+    """一轮对话响应：文本 + 命中意图 + 可选结构化 data + 可选 A2UI 卡片。
 
     data 仅在 handler 产出可序列化 dict 时下发（如音乐：含 orpheus 深链供端侧拉起 app）；
     多数能力的结构化结果（行程/新闻等富对象）暂不序列化，data 为 None。
+    a2ui 是 A2UI v0.9 消息列表（createSurface + updateComponents），仅对声明了
+    富 UI 能力的端（platform=mobile 的 client_flutter）在命中可卡片化意图时下发，
+    由端上 genui 渲染；text 仍完整下发（TTS 朗读与纯文本端不受影响）。
     """
 
     text: str
     intent: str
     session_id: str
     data: dict | None = None
+    a2ui: list[dict] | None = None
 
     def to_dict(self) -> dict:
         d = {"text": self.text, "intent": self.intent, "session_id": self.session_id}
         if self.data is not None:
             d["data"] = self.data
+        if self.a2ui is not None:
+            d["a2ui"] = self.a2ui
         return d

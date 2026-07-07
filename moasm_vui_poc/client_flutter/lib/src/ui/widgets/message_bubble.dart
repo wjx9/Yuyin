@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../a2ui/a2ui_card_view.dart';
 import '../../data/models.dart';
 
 /// 一条聊天气泡：用户靠右(蓝)、助手靠左(浅灰)、系统居中(提示)。
+/// 带 A2UI 卡片的助手消息不走气泡容器，直接渲染穿戴风格卡片（黑底即"透明"）。
 class MessageBubble extends StatelessWidget {
   final ChatTurn turn;
 
@@ -14,6 +16,20 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
+    // A2UI 卡片消息：不套气泡（卡片自带黑底+绿描边），嵌入位置与助手气泡一致。
+    // 渲染细节全部在 a2ui 模块内，这里只负责"摆在消息流哪里"——后续做独立显示区
+    // 时，卡片组件可原样挪走。
+    if (turn.sender == Sender.assistant && !turn.pending && turn.a2ui != null) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.9),
+          child: A2uiCardView(messages: turn.a2ui!),
+        ),
+      );
+    }
 
     if (turn.sender == Sender.system) {
       return Padding(

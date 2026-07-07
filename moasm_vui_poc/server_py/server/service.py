@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from a2ui import build_a2ui
 from routing import RouteContext, build_dispatcher
 
 from .auth import CredentialProvider, MockCredentialProvider
@@ -63,6 +64,9 @@ class ChatService:
 
         # 只下发可序列化的 dict 型 data（如音乐深链）；富对象（NewsResult 等）保持不下发。
         data = result.data if isinstance(result.data, dict) else None
+        # A2UI 卡片只对富 UI 端（client_flutter，platform=mobile）生成；
+        # 纯文本端（chat_app/client_py）不产不发，省流量也免得老客户端困惑。
+        a2ui = build_a2ui(result.intent, result.text) if req.platform == "mobile" else None
         return ChatResponse(
-            text=result.text, intent=result.intent, session_id=req.session_id, data=data
+            text=result.text, intent=result.intent, session_id=req.session_id, data=data, a2ui=a2ui
         )

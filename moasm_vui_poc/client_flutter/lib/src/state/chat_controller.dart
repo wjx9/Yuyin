@@ -145,6 +145,7 @@ class ChatController extends ChangeNotifier {
         text: reply.text,
         intent: reply.intent,
         music: reply.music,
+        a2ui: reply.a2ui,
       );
       connectionError = null;
       status = AssistantStatus.speaking;
