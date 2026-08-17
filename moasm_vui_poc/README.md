@@ -9,7 +9,26 @@
 > **TripNow（航班管家行程引擎）只是接入的第一个 provider，并非项目本身。**
 
 ---
+## 语音助手使用三方能力完成流程图
+```mermaid
+sequenceDiagram
+    participant D as Dispatcher
+    participant C as GeminiClassifier
+    participant G as Gemini
+    participant H as TencentNewsSearchHandler
+    participant S as Tencent News Service
 
+    D->>C: classify(query, handler specs)
+    C->>G: functionDeclarations
+    G-->>C: functionCall<br/>tencent_news_search(keyword=深圳 科技)
+    C-->>D: Route(intent, slots)
+    D->>H: handle(query, context)
+    H->>S: search("深圳 科技")
+    S-->>H: 新闻结果
+    H-->>D: RouteResult(text, data)
+```
+
+---
 ## 项目结构：3 个部署单元 + 1 个共享层
 
 | 顶层目录 | 角色 | 详细文档 |

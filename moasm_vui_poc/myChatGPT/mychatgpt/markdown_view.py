@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import tkinter as tk
+from itertools import count
 from tkinter import font as tkfont
 
 from pygments import highlight
@@ -49,6 +50,7 @@ class TkPygmentsFormatter(Formatter):
 class MarkdownRenderer:
     def __init__(self, text: tk.Text) -> None:
         self.text = text
+        self._fold_ids = count(1)
         base = tkfont.nametofont("TkDefaultFont")
         mono = tkfont.nametofont("TkFixedFont")
         self.fonts = {
@@ -96,6 +98,8 @@ class MarkdownRenderer:
         t.tag_configure("mermaid", font=self.fonts["code"], background="#e8f1ed", foreground="#315c50", lmargin1=78, lmargin2=78, rmargin=92, spacing1=8, spacing3=8)
         t.tag_configure("user_bubble", font=self.fonts["body"], background="#e9e1d3", foreground="#2f2a24", justify="right", lmargin1=170, lmargin2=170, rmargin=64, spacing1=4, spacing3=4)
         t.tag_configure("loading", foreground="#8b6f4e", font=self.fonts["italic"], lmargin1=64, lmargin2=64, rmargin=96, spacing1=4, spacing3=8)
+        t.tag_configure("reasoning_header", foreground="#7a6a58", font=self.fonts["small"], lmargin1=64, lmargin2=64, rmargin=96, spacing1=8, spacing3=4)
+        t.tag_configure("reasoning_body", foreground="#6d6256", background="#f1ede5", lmargin1=78, lmargin2=78, rmargin=96, spacing1=5, spacing3=5)
         t.tag_configure(tk.SEL, background="#b88a55", foreground="#fffdf8")
         t.tag_raise(tk.SEL)
 
@@ -148,6 +152,47 @@ class MarkdownRenderer:
             self._insert_code_block("\n".join(code_lines), code_lang)
         self.text.insert(tk.END, "\n")
         self.text.see(tk.END)
+
+    def append_reasoning(self, markdown: str, *, collapsed: bool = True) -> None:
+        content = markdown.strip()
+        if not content:
+            return
+        fold_id = next(self._fold_ids)
+        header_tag = f"reasoning_header_{fold_id}"
+        body_tag = f"reasoning_body_{fold_id}"
+        header_start = f"reasoning_header_start_{fold_id}"
+        header_end = f"reasoning_header_end_{fold_id}"
+        state = {"collapsed": collapsed}
+
+        self.text.tag_configure(body_tag, elide=collapsed)
+        self.text.mark_set(header_start, tk.END)
+        self.text.mark_gravity(header_start, tk.LEFT)
+        self.text.insert(tk.END, self._reasoning_header_text(collapsed), ("reasoning_header", header_tag))
+        self.text.mark_set(header_end, tk.END)
+        self.text.mark_gravity(header_end, tk.RIGHT)
+        self.text.insert(tk.END, "\n", ("reasoning_header", header_tag))
+
+        for line in content.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            self.text.insert(tk.END, line, ("reasoning_body", body_tag))
+            self.text.insert(tk.END, "\n", ("reasoning_body", body_tag))
+        self.text.insert(tk.END, "\n", (body_tag,))
+
+        def toggle(_event=None) -> str:
+            state["collapsed"] = not state["collapsed"]
+            self.text.tag_configure(body_tag, elide=state["collapsed"])
+            self.text.delete(header_start, header_end)
+            self.text.insert(header_start, self._reasoning_header_text(state["collapsed"]), ("reasoning_header", header_tag))
+            return "break"
+
+        self.text.tag_bind(header_tag, "<Button-1>", toggle)
+        self.text.tag_bind(header_tag, "<Enter>", lambda _event: self.text.configure(cursor="hand2"))
+        self.text.tag_bind(header_tag, "<Leave>", lambda _event: self.text.configure(cursor=""))
+        self.text.see(tk.END)
+
+    def _reasoning_header_text(self, collapsed: bool) -> str:
+        arrow = "\u25b8" if collapsed else "\u25be"
+        label = "\u5df2\u5904\u7406\uff0c\u70b9\u51fb\u67e5\u770b\u8fc7\u7a0b" if collapsed else "\u5904\u7406\u8fc7\u7a0b"
+        return f"{arrow} {label}"
 
     def append_plain(self, text: str, tag: str = "body") -> None:
         self.text.insert(tk.END, text, (tag,))

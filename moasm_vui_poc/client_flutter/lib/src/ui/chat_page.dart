@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/chat_controller.dart';
+import '../workbuddy_debug/workbuddy_debug_page.dart';
 import 'settings_page.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/mic_button.dart';
@@ -63,6 +65,14 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
+          if (kDebugMode)
+            IconButton(
+              tooltip: 'WorkBuddy 调试台',
+              icon: const Icon(Icons.account_tree_outlined),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const WorkBuddyDebugPage()),
+              ),
+            ),
           IconButton(
             tooltip: '已启用能力',
             icon: const Icon(Icons.auto_awesome),

@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 from requests import Response
@@ -31,6 +31,15 @@ class ChatRequest:
     history: list[Message]
     user_message: Message
     workspace: str = ""
+
+
+@dataclass(slots=True)
+class ChatResult:
+    content: str
+    reasoning: str = ""
+
+
+ProgressCallback = Callable[[str], None]
 
 
 def _data_url(attachment) -> str:
@@ -63,10 +72,14 @@ def _system_prompt(config: AppConfig, workspace: str = "") -> str:
         )
         lines.append(
             "可用工具：list_dir(path)、read_file(path)、search_text(pattern,path)、"
-            "write_file(path,content)、run_command(command,timeout_seconds)。"
+            "write_file(path,content)、run_command(command,timeout_seconds)、send_to_user(message)。"
+        )
+        lines.append(
+            "send_to_user 只用于把用户必须看到的阶段性结果或进度原样显示到界面；"
+            "不要用它输出内部推理链。"
         )
         if not config.allow_write_tools:
-            lines.append("当前未允许写入/命令；只应使用 list_dir/read_file/search_text。")
+            lines.append("当前未允许写入/命令；只应使用 list_dir/read_file/search_text/send_to_user。")
         lines.append("拿到工具结果后继续完成用户任务，不要把工具协议解释给用户。")
     return "\n".join(lines)
 
@@ -185,25 +198,17 @@ def _split_think_blocks(content: str) -> tuple[str, str]:
     return cleaned, _join_text_blocks(reasoning)
 
 
-def _compose_visible_completion(content: Any, reasoning: str = "") -> str:
+def _compose_completion(content: Any, reasoning: str = "") -> ChatResult:
     cleaned_content, inline_reasoning = _split_think_blocks(_content_to_text(content))
     reasoning_text = _join_text_blocks([reasoning, inline_reasoning])
-    if not reasoning_text:
-        return cleaned_content
-    quoted = "\n".join(
-        ">" if not line.strip() else f"> {line}"
-        for line in reasoning_text.splitlines()
-    )
-    if cleaned_content:
-        return f"### \u601d\u8003\u8fc7\u7a0b\n\n{quoted}\n\n---\n\n{cleaned_content}"
-    return f"### \u601d\u8003\u8fc7\u7a0b\n\n{quoted}"
+    return ChatResult(content=cleaned_content, reasoning=reasoning_text)
 
 
 class LLMClient:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
 
-    def complete(self, request: ChatRequest) -> str:
+    def complete(self, request: ChatRequest) -> ChatResult:
         cfg = request.config
         key = effective_api_key(cfg)
         if not key:
@@ -248,7 +253,7 @@ class LLMClient:
                 messages.append({"role": role, "content": text})
         return messages
 
-    def _complete_openai(self, request: ChatRequest, api_key: str) -> str:
+    def _complete_openai(self, request: ChatRequest, api_key: str) -> ChatResult:
         cfg = request.config
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
         url = f"{base}/chat/completions"
@@ -273,7 +278,7 @@ class LLMClient:
             raise ProviderError(_format_http_error(response))
         data = response.json()
         message = data["choices"][0].get("message", {})
-        return _compose_visible_completion(
+        return _compose_completion(
             message.get("content"),
             _extract_reasoning_text(message),
         )
@@ -310,7 +315,7 @@ class LLMClient:
                 items.append({"role": role, "content": text or ""})
         return items
 
-    def _complete_aitogit_openai(self, request: ChatRequest, api_key: str) -> str:
+    def _complete_aitogit_openai(self, request: ChatRequest, api_key: str) -> ChatResult:
         cfg = request.config
         url = self._responses_url(cfg.base_url or "https://api.aitogit.cc")
         body: dict[str, Any] = {
@@ -319,7 +324,7 @@ class LLMClient:
             "input": self._responses_input(request),
             "store": False,
             "max_output_tokens": cfg.max_output_tokens,
-            "reasoning": {"effort": "xhigh"},
+            "reasoning": {"effort": "xhigh", "summary": "auto"},
         }
         if cfg.enable_web_search:
             body["tools"] = [{"type": "web_search"}]
@@ -359,7 +364,7 @@ class LLMClient:
                 contents.append({"role": role, "parts": parts})
         return contents
 
-    def _complete_gemini(self, request: ChatRequest, api_key: str) -> str:
+    def _complete_gemini(self, request: ChatRequest, api_key: str) -> ChatResult:
         cfg = request.config
         base = (cfg.base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
         model = cfg.model or "gemini-2.5-flash"
@@ -372,6 +377,8 @@ class LLMClient:
                 "maxOutputTokens": cfg.max_output_tokens,
             },
         }
+        if _gemini_supports_thinking(model):
+            body["generationConfig"]["thinkingConfig"] = {"includeThoughts": True}
         response = _post_json(
             url,
             params={"key": api_key},
@@ -394,7 +401,7 @@ class LLMClient:
                 reasoning_parts.append(part["text"])
             else:
                 answer_parts.append(part["text"])
-        return _compose_visible_completion(
+        return _compose_completion(
             "\n".join(answer_parts),
             _join_text_blocks(reasoning_parts),
         )
@@ -428,7 +435,7 @@ class LLMClient:
             messages.append({"role": role, "content": content or [{"type": "text", "text": ""}]})
         return messages
 
-    def _complete_claude(self, request: ChatRequest, api_key: str) -> str:
+    def _complete_claude(self, request: ChatRequest, api_key: str) -> ChatResult:
         cfg = request.config
         base = (cfg.base_url or "https://api.anthropic.com").rstrip("/")
         url = f"{base}/v1/messages"
@@ -436,9 +443,12 @@ class LLMClient:
             "model": cfg.model or "claude-3-5-sonnet-latest",
             "system": _system_prompt(cfg, request.workspace),
             "messages": self._claude_messages(request),
-            "temperature": cfg.temperature,
             "max_tokens": cfg.max_output_tokens,
         }
+        if _claude_supports_thinking(str(body["model"])):
+            body["thinking"] = {"type": "adaptive", "display": "summarized"}
+        else:
+            body["temperature"] = cfg.temperature
         response = _post_json(
             url,
             headers={
@@ -465,7 +475,7 @@ class LLMClient:
                 answer_parts.append(part["text"])
             elif part_type == "thinking":
                 reasoning_parts.append(_coerce_reasoning_text(part))
-        return _compose_visible_completion(
+        return _compose_completion(
             "\n".join(answer_parts),
             _join_text_blocks(reasoning_parts),
         )
@@ -516,6 +526,25 @@ def _is_retryable_network_error(exc: requests.exceptions.RequestException) -> bo
     )
 
 
+def _claude_supports_thinking(model: str) -> bool:
+    lowered = model.lower()
+    return any(
+        token in lowered
+        for token in (
+            "claude-4",
+            "sonnet-4",
+            "opus-4",
+            "fable",
+            "mythos",
+        )
+    )
+
+
+def _gemini_supports_thinking(model: str) -> bool:
+    lowered = model.lower()
+    return "gemini-2.5" in lowered or "gemini-3" in lowered
+
+
 def _format_network_error(exc: Exception | None) -> str:
     if exc is None:
         return "网络请求失败。"
@@ -533,7 +562,7 @@ def _format_network_error(exc: Exception | None) -> str:
         return "网络连接失败：\n" + "\n".join(f"- {hint}" for hint in hints) + f"\n\n原始错误：{detail}"
     return f"网络连接失败：{detail}"
 
-def _extract_responses_text(data: dict[str, Any]) -> str:
+def _extract_responses_text(data: dict[str, Any]) -> ChatResult:
     texts: list[str] = []
     reasoning_texts: list[str] = []
     citations: list[tuple[str, str]] = []
@@ -577,7 +606,7 @@ def _extract_responses_text(data: dict[str, Any]) -> str:
     if citations:
         sources = "\n".join(f"- [{title}]({url})" for title, url in citations)
         answer = f"{answer}\n\n### \u6765\u6e90\n{sources}" if answer else f"### \u6765\u6e90\n{sources}"
-    return _compose_visible_completion(answer, _join_text_blocks(reasoning_texts))
+    return _compose_completion(answer, _join_text_blocks(reasoning_texts))
 
 
 def _format_http_error(response: requests.Response) -> str:
@@ -614,7 +643,11 @@ def extract_tool_calls(text: str) -> list[dict[str, Any]]:
     return calls
 
 
-def run_agentic_completion(request: ChatRequest, max_rounds: int = 5) -> str:
+def run_agentic_completion(
+    request: ChatRequest,
+    max_rounds: int = 5,
+    progress_callback: ProgressCallback | None = None,
+) -> ChatResult:
     cfg = request.config
     client = LLMClient(cfg)
     if not cfg.agent_mode or not request.workspace:
@@ -622,23 +655,50 @@ def run_agentic_completion(request: ChatRequest, max_rounds: int = 5) -> str:
     toolbox = WorkspaceToolbox(request.workspace, allow_writes=cfg.allow_write_tools)
     scratch_history = [*request.history]
     current_user = request.user_message
-    last_text = ""
-    for _ in range(max_rounds):
+    last_result = ChatResult("")
+    progress_parts: list[str] = []
+
+    def report(text: str) -> None:
+        clean = text.strip()
+        if not clean:
+            return
+        progress_parts.append(clean)
+        if progress_callback:
+            progress_callback(clean)
+
+    for round_index in range(max_rounds):
         step_request = ChatRequest(
             config=cfg,
             history=scratch_history,
             user_message=current_user,
             workspace=request.workspace,
         )
-        last_text = client.complete(step_request)
+        if round_index > 0:
+            report(f"\u7ee7\u7eed\u5904\u7406\u7b2c {round_index + 1} \u8f6e\u5de5\u5177\u7ed3\u679c...")
+        last_result = client.complete(step_request)
+        last_text = last_result.content
+        if last_result.reasoning:
+            report(last_result.reasoning)
         calls = extract_tool_calls(last_text)
         if not calls:
-            return last_text
+            return ChatResult(
+                content=last_text,
+                reasoning=_join_text_blocks([*progress_parts, last_result.reasoning]),
+            )
         scratch_history.append(current_user)
         scratch_history.append(Message(role="assistant", content=last_text))
         results = []
         for call in calls[:8]:
-            result = toolbox.execute(call["tool"], call["args"])
+            if call["tool"] == "send_to_user":
+                message = str(call["args"].get("message") or "").strip()
+                if message:
+                    report(message)
+                    result = "\u5df2\u5c55\u793a\u7ed9\u7528\u6237\u3002"
+                else:
+                    result = "send_to_user \u7f3a\u5c11 message \u53c2\u6570\u3002"
+            else:
+                result = toolbox.execute(call["tool"], call["args"])
+                report(f"\u5df2\u8fd0\u884c\u5de5\u5177 {call['tool']}\u3002")
             results.append({"tool": call["tool"], "args": call["args"], "result": result})
         current_user = Message(
             role="user",
@@ -648,7 +708,10 @@ def run_agentic_completion(request: ChatRequest, max_rounds: int = 5) -> str:
                 f"```json\n{json.dumps(results, ensure_ascii=False, indent=2)}\n```"
             ),
         )
-    return last_text + "\n\n[代理模式达到最大工具轮数，已停止。]"
+    return ChatResult(
+        content=last_result.content + "\n\n[\u4ee3\u7406\u6a21\u5f0f\u8fbe\u5230\u6700\u5927\u5de5\u5177\u8f6e\u6570\uff0c\u5df2\u505c\u6b62\u3002]",
+        reasoning=_join_text_blocks([*progress_parts, last_result.reasoning]),
+    )
 
 
 

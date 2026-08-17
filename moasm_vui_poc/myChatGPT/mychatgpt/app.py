@@ -10,7 +10,7 @@ from typing import Callable
 from PIL import Image, ImageGrab
 
 from .config import AppConfig, ConfigStore, PROVIDER_NAMES, environment_api_key
-from .llm_client import ChatRequest, ProviderError, run_agentic_completion
+from .llm_client import ChatRequest, ChatResult, ProviderError, run_agentic_completion
 from .markdown_view import MarkdownRenderer
 from .storage import Attachment, Conversation, ConversationStore, Message, now_iso
 from .voice import listen_once, speak
@@ -35,6 +35,7 @@ class ChatApp:
         self.loading_phase = 0
         self.loading_frame: tk.Frame | None = None
         self.loading_canvas: tk.Canvas | None = None
+        self.live_reasoning_parts: dict[str, list[str]] = {}
         self.settings_visible = False
 
         self._init_style()
@@ -516,7 +517,7 @@ class ChatApp:
             role = "\u4f60" if message.role == "user" else "myChatGPT"
             lines.extend(["---", "", f"## {role}  {message.created_at}", ""])
             if message.reasoning:
-                lines.extend(["### \u601d\u8003\u8fc7\u7a0b", ""])
+                lines.extend(["### \u5904\u7406\u8fc7\u7a0b", ""])
                 lines.extend(
                     ">" if not line.strip() else f"> {line}"
                     for line in message.reasoning.splitlines()
@@ -533,11 +534,15 @@ class ChatApp:
 
     def _render_conversation(self) -> None:
         self._clear_loading()
+        self._clear_live_reasoning()
         self.chat_text.delete("1.0", tk.END)
         for message in self.conversation.messages:
             self._append_message_to_chat(message)
         if self._is_conversation_busy():
-            self._show_loading()
+            if self.live_reasoning_parts.get(self.conversation.id):
+                self._render_live_reasoning(self.conversation.id)
+            else:
+                self._show_loading()
 
     def _append_message_to_chat(self, message: Message) -> None:
         if message.role == "user":
@@ -555,11 +560,7 @@ class ChatApp:
                 self.renderer.append_plain(f"[{item.kind}] {item.name}  {item.mime}  {item.size} bytes\n", "meta")
             self.renderer.append_plain("\n", "meta")
         if message.reasoning:
-            quoted = "\n".join(
-                ">" if not line.strip() else f"> {line}"
-                for line in message.reasoning.splitlines()
-            )
-            self.renderer.append_markdown(f"### \u601d\u8003\u8fc7\u7a0b\n\n{quoted}\n\n---")
+            self.renderer.append_reasoning(message.reasoning, collapsed=True)
         if message.content:
             self.renderer.append_markdown(message.content)
         elif message.attachments:
@@ -716,6 +717,7 @@ class ChatApp:
         self.busy_conversation_ids.add(conversation_id)
         self._sync_busy_controls()
         self._set_status("\u6b63\u5728\u8bf7\u6c42\u6a21\u578b...")
+        self.live_reasoning_parts[conversation_id] = []
         self._show_loading()
         thread = threading.Thread(target=self._send_worker, args=(conversation_id, request), daemon=True)
         thread.start()
@@ -794,17 +796,62 @@ class ChatApp:
         self.loading_frame = None
         self.loading_canvas = None
 
-    def _send_worker(self, conversation_id: str, request: ChatRequest) -> None:
+    def _clear_live_reasoning(self) -> None:
         try:
-            answer = run_agentic_completion(request)
+            marks = set(self.chat_text.mark_names())
+            if {"live_reasoning_start", "live_reasoning_end"}.issubset(marks):
+                self.chat_text.delete("live_reasoning_start", "live_reasoning_end")
+                self.chat_text.mark_unset("live_reasoning_start")
+                self.chat_text.mark_unset("live_reasoning_end")
+        except tk.TclError:
+            pass
+
+    def _receive_progress(self, conversation_id: str, text: str) -> None:
+        if conversation_id not in self.busy_conversation_ids:
+            return
+        clean = text.strip()
+        if not clean:
+            return
+        parts = self.live_reasoning_parts.setdefault(conversation_id, [])
+        if clean not in parts:
+            parts.append(clean)
+        if self.conversation.id != conversation_id:
+            return
+        self._render_live_reasoning(conversation_id)
+
+    def _render_live_reasoning(self, conversation_id: str) -> None:
+        parts = self.live_reasoning_parts.get(conversation_id) or []
+        if not parts:
+            return
+        self._clear_loading()
+        self._clear_live_reasoning()
+        self.chat_text.mark_set("live_reasoning_start", tk.END)
+        self.chat_text.mark_gravity("live_reasoning_start", tk.LEFT)
+        self.renderer.append_role_header("assistant", now_iso())
+        self.renderer.append_reasoning("\n\n".join(parts), collapsed=False)
+        self.chat_text.mark_set("live_reasoning_end", tk.END)
+        self.chat_text.mark_gravity("live_reasoning_end", tk.RIGHT)
+        self.chat_text.see(tk.END)
+
+    def _send_worker(self, conversation_id: str, request: ChatRequest) -> None:
+        def progress(text: str) -> None:
+            self.root.after(0, lambda value=text: self._receive_progress(conversation_id, value))
+
+        try:
+            answer = run_agentic_completion(request, progress_callback=progress)
             self.root.after(0, lambda: self._receive_answer(conversation_id, answer))
         except ProviderError as exc:
             self.root.after(0, lambda err=str(exc): self._receive_error(conversation_id, err))
         except Exception as exc:
             self.root.after(0, lambda err=f"\u8bf7\u6c42\u5931\u8d25\uff1a{exc}": self._receive_error(conversation_id, err))
 
-    def _receive_answer(self, conversation_id: str, answer: str) -> None:
-        message = Message(role="assistant", content=answer or "[\u6a21\u578b\u6ca1\u6709\u8fd4\u56de\u6587\u672c]", created_at=now_iso())
+    def _receive_answer(self, conversation_id: str, answer: ChatResult) -> None:
+        message = Message(
+            role="assistant",
+            content=answer.content or "[\u6a21\u578b\u6ca1\u6709\u8fd4\u56de\u6587\u672c]",
+            created_at=now_iso(),
+            reasoning=answer.reasoning,
+        )
         self._finish_pending_message(conversation_id, message, "\u5b8c\u6210")
         if self.auto_speak_var.get():
             threading.Thread(target=speak, args=(message.content,), daemon=True).start()
@@ -817,6 +864,7 @@ class ChatApp:
         active_conversation = self.conversation.id == conversation_id
         if active_conversation:
             self._clear_loading()
+            self._clear_live_reasoning()
             conversation = self.conversation
         else:
             conversation = self.store.load(conversation_id)
@@ -830,6 +878,7 @@ class ChatApp:
                 self._sync_header_title()
 
         self.busy_conversation_ids.discard(conversation_id)
+        self.live_reasoning_parts.pop(conversation_id, None)
         self._load_conversations()
         self._highlight_current()
         self._sync_busy_controls()
