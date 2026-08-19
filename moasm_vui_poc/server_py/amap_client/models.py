@@ -40,6 +40,98 @@ class Poi:
     open_time: str | None = None
     reason: str | None = None
 
+@dataclass
+class GeoPoint:
+    """一个地址解析后的地点。location 格式固定为 '经度,纬度'。"""
+
+    formatted_address: str
+    location: str
+    adcode: str | None = None
+    city: str | None = None
+
+@dataclass
+class WeatherLive:
+    """高德实时天气。"""
+
+    city: str
+    weather: str
+    temperature: str
+    winddirection: str | None = None
+    windpower: str | None = None
+    humidity: str | None = None
+    reporttime: str | None = None
+
+@dataclass
+class WeatherDay:
+    """某一天的天气预报。"""
+
+    date: str
+    day_weather: str
+    night_weather: str
+    day_temp: str
+    night_temp: str
+    day_wind: str | None = None
+    night_wind: str | None = None
+    day_power: str | None = None
+    night_power: str | None = None
+
+
+@dataclass
+class WeatherForecast:
+    """高德未来天气预报。"""
+
+    city: str
+    reporttime: str | None = None
+    days: list[WeatherDay] = field(default_factory=list)
+
+@dataclass
+class RouteStep:
+    """一段驾车导航指令。"""
+
+    instruction: str
+    distance_m: int | None = None
+    road_name: str | None = None
+
+
+@dataclass
+class DrivingRoute:
+    """高德驾车路线规划结果。"""
+
+    origin: GeoPoint
+    destination: GeoPoint
+    distance_m: int
+    duration_s: int
+    strategy: str | None = None
+    tolls: float | None = None
+    toll_distance_m: int | None = None
+    steps: list[RouteStep] = field(default_factory=list)
+
+
+@dataclass
+class ActiveRoute:
+    """步行或骑行路线规划结果。"""
+
+    origin: GeoPoint
+    destination: GeoPoint
+    distance_m: int
+    duration_s: int
+    steps: list[RouteStep] = field(default_factory=list)
+
+
+@dataclass
+class TransitRoute:
+    """公交/地铁路线规划结果。"""
+
+    origin: GeoPoint
+    destination: GeoPoint
+    distance_m: int | None
+    duration_s: int | None
+    walking_distance_m: int | None = None
+    cost_yuan: float | None = None
+    transfers: int | None = None
+    segments: list[str] = field(default_factory=list)
+
+
 
 @dataclass
 class MapResult:

@@ -26,9 +26,17 @@ from .handlers import (
     MusicPlayHandler,
     TencentHotNewsHandler,
     TencentNewsSearchHandler,
-    TencentWeatherHandler,
+    #TencentWeatherHandler,
     TripNowPersonalHandler,
     TripNowPublicHandler,
+    AmapGeocodeHandler,
+    AmapWeatherForecastHandler,
+    AmapWeatherLiveHandler,
+    AmapDrivingHandler,
+    AmapBicyclingHandler,
+    AmapWalkingHandler,
+    AmapTransitHandler,
+    AmapRegeoHandler,
 )
 
 
@@ -86,15 +94,61 @@ def _try_add_kuaidi100(handlers: list[Handler]) -> None:
 def _try_add_amap(handlers: list[Handler], gemini: GeminiClient) -> None:
     if not os.getenv("AMAP_KEY", "").strip():
         return
-    from amap_client.config import AmapSettings, build_service
 
+    from amap_client.config import AmapSettings, build_service
+    from amap_client.geocode_service import GeoCodeService
+    from amap_client.rest_client import AmapRestClient
+    from amap_client.driving_service import DrivingRouteService
+    from amap_client.active_route_service import ActiveRouteService
+    from amap_client.transit_service import TransitRouteService
+    from amap_client.regeo_service import RegeoService
+    from amap_client.weather_service import AmapWeatherService
     from .handlers.amap import GeminiMapQueryParser
 
-    # REST 后端的降级解析器：正常路径槽位随分类一次抽出（AmapHandler.slots），
-    # 只有槽位为空时才会走到它（a2a 后端会忽略它）。
-    service = build_service(AmapSettings.from_env(), parser=GeminiMapQueryParser(gemini))
-    handlers.append(AmapHandler(service))
+    settings = AmapSettings.from_env()
 
+    poi_service = build_service(
+        settings,
+        parser=GeminiMapQueryParser(gemini),
+    )
+    handlers.append(AmapHandler(poi_service))
+
+    rest_client = AmapRestClient(settings.key)
+    geocode_service = GeoCodeService(rest_client)
+    regeo_service = RegeoService(rest_client)
+    handlers.append(AmapGeocodeHandler(geocode_service))
+    handlers.append(AmapRegeoHandler(regeo_service, settings.default_location))
+    handlers.append(
+        AmapDrivingHandler(
+            DrivingRouteService(rest_client, geocode_service, regeo_service),
+            default_location=settings.default_location,
+        )
+    )
+    handlers.append(
+        AmapWalkingHandler(
+            ActiveRouteService(rest_client, geocode_service, regeo_service, mode="walking"),
+            default_location=settings.default_location,
+        )
+    )
+    handlers.append(
+        AmapBicyclingHandler(
+            ActiveRouteService(rest_client, geocode_service, regeo_service, mode="bicycling"),
+            default_location=settings.default_location,
+        )
+    )
+    handlers.append(
+        AmapTransitHandler(
+            TransitRouteService(rest_client, geocode_service, regeo_service),
+            default_location=settings.default_location,
+        )
+    )
+    weather_service = AmapWeatherService(rest_client, geocode_service)
+    default_city = os.getenv("AMAP_DEFAULT_CITY", "深圳").strip() or "深圳"
+
+    handlers.append(AmapWeatherLiveHandler(weather_service, default_city=default_city))
+    handlers.append(
+        AmapWeatherForecastHandler(weather_service, default_city=default_city)
+)
 
 def _try_add_tencent_news(handlers: list[Handler]) -> None:
     if not os.getenv("TENCENT_NEWS_API_KEY", "").strip():
@@ -110,7 +164,7 @@ def _try_add_tencent_news(handlers: list[Handler]) -> None:
     service = build_service(TencentNewsSettings.from_env())
     handlers.append(TencentHotNewsHandler(service))
     handlers.append(TencentNewsSearchHandler(service))
-    handlers.append(TencentWeatherHandler(service))
+    #handlers.append(TencentWeatherHandler(service))
 
 
 def _try_add_music163(handlers: list[Handler]) -> None:

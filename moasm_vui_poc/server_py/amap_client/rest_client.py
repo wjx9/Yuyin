@@ -18,7 +18,8 @@ import requests
 
 from .errors import AmapError
 
-_BASE = "https://restapi.amap.com/v3/place"
+_HOST = "https://restapi.amap.com"
+_BASE = f"{_HOST}/v3/place"
 _TIMEOUT = (10, 30)
 
 
@@ -73,20 +74,119 @@ class AmapRestClient:
             },
         )
 
+    def geocode(self, *, address: str, city: str = "") -> dict[str, Any]:
+        """地理编码：地址/地名 -> 经纬度。"""
+        return self._request(
+            f"{_HOST}/v3/geocode/geo",
+            {
+                "address": address,
+                "city": city,
+            },
+        )
+
+    def weather_live(self, *, city: str) -> dict[str, Any]:
+        """实时天气。city 必须是行政区划码，例如深圳为 440300。"""
+        return self._request(
+            f"{_HOST}/v3/weather/weatherInfo",
+            {
+                "city": city,
+                "extensions": "base",
+            },
+        )
+
+    def weather_forecast(self, *, city: str) -> dict[str, Any]:
+        """天气预报。city 必须是行政区划码，例如深圳为 440300。"""
+        return self._request(
+            f"{_HOST}/v3/weather/weatherInfo",
+            {
+                "city": city,
+                "extensions": "all",
+            },
+        )
+    def driving(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        strategy: int = 0,
+    ) -> dict[str, Any]:
+        """驾车路线规划。origin/destination 格式均为“经度,纬度”。"""
+        return self._request(
+            f"{_HOST}/v5/direction/driving",
+            {
+                "origin": origin,
+                "destination": destination,
+                "strategy": strategy,
+                "show_fields": "cost,navi",
+            },
+        )
+
+    def regeo(self, *, location: str) -> dict[str, Any]:
+        """逆地理编码：经纬度 -> 地址和行政区划码。"""
+        return self._request(
+            f"{_HOST}/v3/geocode/regeo",
+            {"location": location, "extensions": "base"},
+        )
+
+    def walking(self, *, origin: str, destination: str) -> dict[str, Any]:
+        """步行路线规划。origin/destination 格式均为“经度,纬度”。"""
+        return self._request(
+            f"{_HOST}/v5/direction/walking",
+            {
+                "origin": origin,
+                "destination": destination,
+                "show_fields": "cost,navi",
+            },
+        )
+
+    def bicycling(self, *, origin: str, destination: str) -> dict[str, Any]:
+        """骑行路线规划。origin/destination 格式均为“经度,纬度”。"""
+        return self._request(
+            f"{_HOST}/v5/direction/bicycling",
+            {
+                "origin": origin,
+                "destination": destination,
+                "show_fields": "cost,navi",
+            },
+        )
+
+    def transit(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        city1: str,
+        city2: str,
+    ) -> dict[str, Any]:
+        """公交/地铁路线规划。city1/city2 为起终点行政区划码。"""
+        return self._request(
+            f"{_HOST}/v5/direction/transit/integrated",
+            {
+                "origin": origin,
+                "destination": destination,
+                "city1": city1,
+                "city2": city2,
+                "show_fields": "cost,navi",
+            },
+        )
+
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        # 丢掉空值，避免高德对空字符串参数报错
+        params = {**params, "extensions": "all"}
+        return self._request(f"{_BASE}/{path}", params)
+
+    def _request(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         query = {k: v for k, v in params.items() if v not in ("", None)}
         query["key"] = self._key
-        query["extensions"] = "all"
+
         try:
-            resp = self._session.get(f"{_BASE}/{path}", params=query, timeout=_TIMEOUT)
+            resp = self._session.get(url, params=query, timeout=_TIMEOUT)
         except requests.RequestException as e:
             raise AmapError(f"高德 REST 请求失败: {e}") from e
+
         if not resp.ok:
             raise AmapError(f"高德 REST 返回 {resp.status_code}: {resp.text[:200]}")
 
         data = resp.json()
-        # 高德 REST 约定：status=="1" 成功；否则看 info/infocode
         if str(data.get("status")) != "1":
             raise AmapError(
                 f"高德 REST 错误: {data.get('info')} ({data.get('infocode')})"

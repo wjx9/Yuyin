@@ -47,7 +47,7 @@ def _map_query_from_slots(slots: dict, query: str) -> MapQuery:
 
 class AmapHandler(Handler):
     intent = "amap"
-    description = "地图与位置服务：附近的店/景点/美食、路线导航、怎么走、周边查询"
+    description = "地图地点搜索：附近的店、景点、美食、咖啡、商场、加油站等 POI 周边查询；不处理天气、地址转坐标或路线规划"
     slots = _SLOTS
 
     def __init__(self, service: MapService):
