@@ -36,6 +36,7 @@ class SlotSpec:
     name: str
     type: str  # "string" | "integer"
     description: str
+    required: bool = False
 
 
 @dataclass
@@ -48,6 +49,7 @@ class RouteContext:
     history: list[Turn] = field(default_factory=list)  # 最近若干轮问答（最旧在前），供需要上下文的 handler 使用
     platform: str = "pc"  # 发起端类型："pc"（chat_app / client_py）或 "mobile"（client_flutter）。见 Handler.pc_only
     slots: dict[str, Any] = field(default_factory=dict)  # 分类时顺带抽出的槽位（见模块 docstring：可能为空，handler 须自行兜底）
+    metadata: dict[str, Any] = field(default_factory=dict)  # 通用请求元数据（来源、设备信息等）
 
 
 @dataclass
@@ -57,6 +59,9 @@ class RouteResult:
     text: str
     data: Any | None = None  # 结构化数据（TripNow model_data / 快递轨迹 / 高德 POI）
     intent: str = ""  # 实际命中的能力
+    status: str = "success"  # "success" | "empty" | "blocked" | "failed"
+    source: str = ""  # 事实来源
+    method: str = ""  # 获取方式
 
 
 @dataclass(frozen=True)

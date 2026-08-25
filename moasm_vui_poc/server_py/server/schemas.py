@@ -49,6 +49,7 @@ class ChatRequest:
     session_id —— 客户端生成并固定的会话 id，服务端据此隔离多轮历史
     user_id    —— 我方平台的用户账号；将来真鉴权时用它查该用户的三方 token（现 mock）
     location   —— "经度,纬度"，供高德等基于位置的能力使用（可空）
+    location_source —— 位置来源，例如 mobile_gps 或 configured_location（可空）
     platform   —— 发起端类型："pc"（chat_app / client_py）或 "mobile"（client_flutter）。
                   据此屏蔽 PC-only 能力（如 music_control：只控服务端本机 mpv，对移动端无意义）。
                   缺省 "pc"，即老客户端不带此字段时行为不变。
@@ -59,6 +60,7 @@ class ChatRequest:
     session_id: str
     user_id: str = "mock-user"
     location: str | None = None
+    location_source: str | None = None
     platform: str = "pc"
     include_data: bool = True
 
@@ -75,6 +77,7 @@ class ChatRequest:
             session_id=_require_str(d, "session_id"),
             user_id=user_id,
             location=_optional_str(d, "location"),
+            location_source=_optional_str(d, "location_source"),
             platform=normalize_platform(d.get("platform")),
             include_data=include_data,
         )

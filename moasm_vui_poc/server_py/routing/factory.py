@@ -37,6 +37,11 @@ from .handlers import (
     AmapWalkingHandler,
     AmapTransitHandler,
     AmapRegeoHandler,
+    ExaSearchHandler,
+    CalendarCreateHandler,
+    AlarmCreateHandler,
+    TimerCreateHandler,
+    ReminderCreateHandler,
 )
 
 
@@ -52,11 +57,14 @@ def build_dispatcher(
 
     chitchat = ChitchatHandler(gemini)  # 兜底，必有
     handlers: list[Handler] = [chitchat]
+    handlers.append(CalendarCreateHandler())
+    handlers.extend([AlarmCreateHandler(), TimerCreateHandler(), ReminderCreateHandler()])
 
     _try_add_tripnow(handlers)
     _try_add_kuaidi100(handlers)
     _try_add_amap(handlers, gemini)
     _try_add_tencent_news(handlers)
+    _try_add_exa(handlers)
     _try_add_music163(handlers)
 
     if extra_handlers:
@@ -165,6 +173,18 @@ def _try_add_tencent_news(handlers: list[Handler]) -> None:
     handlers.append(TencentHotNewsHandler(service))
     handlers.append(TencentNewsSearchHandler(service))
     #handlers.append(TencentWeatherHandler(service))
+
+def _try_add_exa(handlers: list[Handler]) -> None:
+    key = os.getenv("EXA_API_KEY", "").strip()
+    if not key:
+        return
+
+    from exa_client.client import ExaClient
+    from exa_client.service import ExaSearchService
+
+    service = ExaSearchService(ExaClient(key))
+    handlers.append(ExaSearchHandler(service))
+
 
 
 def _try_add_music163(handlers: list[Handler]) -> None:

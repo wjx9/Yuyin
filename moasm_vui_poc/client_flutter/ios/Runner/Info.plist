@@ -9,6 +9,9 @@
 	<string>需要麦克风以将你的语音转成文字发给助手</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>需要语音识别以理解你说的话</string>
+	<!-- 前台 GPS 定位权限说明 -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>需要定位以提供附近搜索和路线规划服务</string>
 	<!-- iOS 14+ 访问局域网内的 serve.py 需要本地网络权限说明 -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>需要本地网络以连接同一 WiFi 下的助手服务端</string>

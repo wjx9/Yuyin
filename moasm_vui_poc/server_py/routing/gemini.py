@@ -65,10 +65,15 @@ class GeminiClient:
         system: str | None = None,
         temperature: float = 0.0,
         history: list[tuple[str, str]] | None = None,
+        response_mime_type: str | None = None,
     ) -> str:
         """纯文本生成（分类器/无需联网的场景用），返回正文字符串。"""
         return self.answer(
-            prompt, system=system, temperature=temperature, history=history
+            prompt,
+            system=system,
+            temperature=temperature,
+            history=history,
+            response_mime_type=response_mime_type,
         ).text
 
     def answer(
@@ -79,6 +84,7 @@ class GeminiClient:
         temperature: float = 0.0,
         history: list[tuple[str, str]] | None = None,
         grounded: bool = False,
+        response_mime_type: str | None = None,
     ) -> GeminiAnswer:
         """生成并返回 GeminiAnswer。grounded=True 时挂上 Google Search 工具，
         模型按需联网（简单问题不会真搜），并回传来源。"""
@@ -88,6 +94,8 @@ class GeminiClient:
         }
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
+        if response_mime_type:
+            body["generationConfig"]["responseMimeType"] = response_mime_type
         if grounded:
             body["tools"] = [{"google_search": {}}]  # Gemini 2.x 内置联网搜索工具
 

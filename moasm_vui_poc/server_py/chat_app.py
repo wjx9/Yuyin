@@ -11,8 +11,8 @@
     python chat_app.py --show-intent "附近的咖啡"
 
 整条链路：
-    用户输入 → Dispatcher.classify（Gemini 分类，关键词兜底）→ 选中 Handler
-            → Handler 调用对应 provider（各自内部再做场景/工具路由）→ 统一 RouteResult
+    用户输入 → LangGraph execute（Dispatcher 分类并执行 Handler）
+            → LangGraph compose（Gemini 将工具结果整理为自然语言）→ 最终回复
 """
 
 from __future__ import annotations
@@ -62,7 +62,8 @@ def _load_env() -> None:
 
 _load_env()
 
-from routing import RouteContext, SessionHistory, build_dispatcher, setup_logging
+from routing import RouteContext, SessionHistory, setup_logging
+from orchestration import build_assistant_graph
 from ui_py import Presenter, TerminalPresenter
 
 _EPILOG = """\
@@ -84,13 +85,13 @@ _EPILOG = """\
   .env: ROUTING_LOG_LEVEL=DEBUG        持久开启，打印分类细节/命中技能/耗时
   CLI : --debug                        本次运行临时开启
 
-链路：输入 → Dispatcher 分类(Gemini，失败回退关键词) → 选中 Handler
-      → 调对应 provider(各自内部再做场景/工具路由) → 统一 RouteResult
+链路：输入 → LangGraph execute（Dispatcher 分类并调用对应 Handler）
+      → LangGraph compose（Gemini 整理工具结果）→ 最终回复
 """
 
 
 def _run_once(
-    dispatcher,
+    assistant,
     query: str,
     context: RouteContext,
     show_intent: bool,
@@ -99,7 +100,7 @@ def _run_once(
 ) -> None:
     presenter.show_input(query)  # 先画输入框，dispatch 期间的日志随后落在中间
     context.history = history.turns  # 本轮之前的历史
-    result = dispatcher.dispatch(query, context)
+    result = assistant.run(query, context)
     presenter.show_output(result.text, intent=result.intent if show_intent else None)
     history.append(query, result.text)
     history.save()
@@ -131,14 +132,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--show-intent", action="store_true", help="在回复前打印本轮命中的意图 id")
     parser.add_argument("--no-data", action="store_true", help="不请求结构化数据（仅要自然语言回复）")
     parser.add_argument(
-        "--no-memory",
+        "--persist-memory",
         action="store_true",
-        help="本次不读写会话历史（默认记住最近 30 轮，跨进程持久化到 ~/.tripnow/history.json）",
+        help="将最近 30 轮会话持久化到 ~/.tripnow/history.json；默认只记住本次启动期间的对话",
     )
     parser.add_argument(
         "--reset-memory",
         action="store_true",
-        help="开始前清空已保存的会话历史",
+        help="清空已保存的会话历史（需同时指定 --persist-memory）",
     )
     parser.add_argument(
         "--debug",
@@ -152,12 +153,18 @@ def main(argv: list[str] | None = None) -> int:
         help="只回答一轮就退出（用于脚本/管道）；默认进入连续对话循环",
     )
     args = parser.parse_args(argv)
+    if args.reset_memory and not args.persist_memory:
+        parser.error("--reset-memory 需同时指定 --persist-memory")
 
     presenter = TerminalPresenter(color=False if args.no_color else None)
-    setup_logging("DEBUG" if args.debug else None, formatter=presenter.log_formatter())
+    setup_logging(
+        "DEBUG" if args.debug else None,
+        formatter=presenter.log_formatter(),
+        namespaces=("routing", "orchestration"),
+    )
 
     try:
-        dispatcher = build_dispatcher()
+        assistant = build_assistant_graph()
     except RuntimeError as e:
         print(f"启动失败：{e}", file=sys.stderr)
         return 1
@@ -168,26 +175,26 @@ def main(argv: list[str] | None = None) -> int:
         include_data=not args.no_data,
     )
 
-    history = SessionHistory(path=None) if args.no_memory else SessionHistory()
+    history = SessionHistory() if args.persist_memory else SessionHistory(path=None)
     if args.reset_memory:
         history.clear()
     history.load()
 
-    presenter.banner(dispatcher.intents)
+    presenter.banner(assistant.capabilities)
 
     # --once：脚本/管道场景，只回答一轮（需带初始 query）
     if args.once:
         if not args.query:
             print("--once 需要同时给出一句提问", file=sys.stderr)
             return 2
-        _run_once(dispatcher, args.query, context, args.show_intent, history, presenter)
+        _run_once(assistant, args.query, context, args.show_intent, history, presenter)
         return 0
 
-    presenter.intro(dispatcher.specs)
+    presenter.intro(assistant.specs)
 
     # 命令行带了 query 就作为第一轮，随后照常进入连续对话循环（与 exe 行为一致）
     if args.query:
-        _run_once(dispatcher, args.query, context, args.show_intent, history, presenter)
+        _run_once(assistant, args.query, context, args.show_intent, history, presenter)
 
     while True:
         try:
@@ -199,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if query.lower() in {"exit", "quit", "q"}:
             break
-        _run_once(dispatcher, query, context, args.show_intent, history, presenter)
+        _run_once(assistant, query, context, args.show_intent, history, presenter)
     return 0
 
 

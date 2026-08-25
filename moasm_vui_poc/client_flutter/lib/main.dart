@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 
 import 'src/services/speech_service.dart';
 import 'src/services/tts_service.dart';
+import 'src/services/location_service.dart';
 import 'src/state/chat_controller.dart';
 import 'src/state/settings_controller.dart';
 import 'src/ui/chat_page.dart';
@@ -24,7 +25,13 @@ Future<void> main() async {
 
   final speech = SpeechService();
   final tts = TtsService();
-  final chat = ChatController(settings: settings, speech: speech, tts: tts);
+  final location = LocationService();
+  final chat = ChatController(
+    settings: settings,
+    speech: speech,
+    tts: tts,
+    location: location,
+  );
 
   // 启动即探活：把服务端已启用能力取回来（连不上则在界面顶部提示去设置）
   chat.refreshHealth();

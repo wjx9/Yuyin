@@ -42,8 +42,8 @@ class AmapTransitHandler(Handler):
         "不处理驾车、步行、骑行、高铁、航班或火车路线。"
     )
     slots = (
-        SlotSpec("origin", "string", "公交/地铁出发地点，只填写地点名称；必填"),
-        SlotSpec("destination", "string", "公交/地铁目的地，只填写地点名称；必填"),
+        SlotSpec("origin", "string", "公交/地铁出发地点；如果手机提供了当前位置且用户未说明起点，可以使用当前位置"),
+        SlotSpec("destination", "string", "公交/地铁目的地，只填写地点名称；必填", required=True),
         SlotSpec("origin_city", "string", "出发地点所在城市；无法判断时不要填写"),
         SlotSpec("destination_city", "string", "目的地所在城市；无法判断时不要填写"),
     )
@@ -58,7 +58,11 @@ class AmapTransitHandler(Handler):
         destination = context.slots.get("destination") or fallback_destination
         origin_city = context.slots.get("origin_city") or ""
         destination_city = context.slots.get("destination_city") or ""
-        origin_location = (context.location or self._default_location) if origin in _HERE_WORDS else None
+        origin_location = context.location or self._default_location
+        if not origin and origin_location:
+            origin = "我这里"
+        if origin not in _HERE_WORDS:
+            origin_location = None
         if not origin or not destination:
             return RouteResult(
                 text="请告诉我公交或地铁的起点和终点，例如“从深圳宝安区坐地铁到南山科技园”。",
@@ -71,7 +75,11 @@ class AmapTransitHandler(Handler):
                 kwargs["origin_location"] = origin_location
             route = self._service.plan(origin, destination, **kwargs)
         except AmapError as error:
-            return RouteResult(text=f"公交路线查询失败：{error}", intent=self.intent)
+            return RouteResult(
+                text=f"公交路线查询失败：{error}",
+                intent=self.intent,
+                status="failed",
+            )
 
         details: list[str] = []
         duration = _format_duration(route.duration_s)

@@ -47,8 +47,8 @@ class DrivingRouteService:
         if origin_location and self._regeo_service:
             origin_point = self._regeo_service.reverse_geocode(origin_location)
         else:
-            origin_point = self._geocode_service.geocode(origin, city=origin_city)
-        destination_point = self._geocode_service.geocode(
+            origin_point = self._geocode_service.resolve_place(origin, city=origin_city)
+        destination_point = self._geocode_service.resolve_place(
             destination,
             city=destination_city,
         )

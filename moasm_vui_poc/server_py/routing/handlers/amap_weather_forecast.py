@@ -33,11 +33,7 @@ def _skip_days(query: str) -> int:
     return 0
 
 
-def _forecast_count(query: str, context: RouteContext) -> int:
-    days = context.slots.get("days")
-    if isinstance(days, int) and 1 <= days <= 4:
-        return days
-
+def _forecast_count(query: str) -> int:
     match = _DAYS_RE.search(query)
     if match:
         return min(max(int(match.group(1)), 1), 4)
@@ -61,11 +57,6 @@ class AmapWeatherForecastHandler(Handler):
             "string",
             "用户点名的城市、区或县，例如“深圳”“深圳宝安区”；未点名时不要填写",
         ),
-        SlotSpec(
-            "days",
-            "integer",
-            "用户明确要求的预报天数，例如“未来三天”填 3；未明确要求时不要填写",
-        ),
     )
 
     def __init__(self, service: AmapWeatherService, default_city: str = "深圳"):
@@ -81,15 +72,19 @@ class AmapWeatherForecastHandler(Handler):
             return RouteResult(
                 text=f"天气预报查询失败：{error}",
                 intent=self.intent,
+                status="failed",
             )
 
         skip = _skip_days(query)
-        selected = forecast.days[skip : skip + _forecast_count(query, context)]
+        # 具体日期未能解析时保留服务返回的完整窗口，避免把“周六”等口语时间
+        # 错当作预报列表第一天；总结层可基于明确日期择要表达。
+        selected = forecast.days[skip : skip + _forecast_count(query)]
 
         if not selected:
             return RouteResult(
                 text=f"没有找到{city}对应日期的天气预报。",
                 intent=self.intent,
+                status="empty",
             )
 
         lines = [f"{forecast.city}天气预报："]

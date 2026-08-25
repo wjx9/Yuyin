@@ -181,7 +181,9 @@ class AmapRestClient:
         try:
             resp = self._session.get(url, params=query, timeout=_TIMEOUT)
         except requests.RequestException as e:
-            raise AmapError(f"高德 REST 请求失败: {e}") from e
+            # requests 的异常文本可能包含完整 URL；本接口把 key 放在 query 参数中，
+            # 不能将其透传给用户或日志。
+            raise AmapError("高德 REST 请求失败，请检查网络后重试") from e
 
         if not resp.ok:
             raise AmapError(f"高德 REST 返回 {resp.status_code}: {resp.text[:200]}")

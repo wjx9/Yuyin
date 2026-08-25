@@ -84,6 +84,11 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: c.messages.isEmpty ? null : c.clear,
           ),
           IconButton(
+            tooltip: '打开日历',
+            icon: const Icon(Icons.calendar_month_outlined),
+            onPressed: c.openCalendar,
+          ),
+          IconButton(
             tooltip: '设置',
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.of(context).push(

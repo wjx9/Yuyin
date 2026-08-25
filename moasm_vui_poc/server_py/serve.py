@@ -65,7 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # 同时配置 routing 与 server 两个命名空间，让服务端日志（含 mock 鉴权提示）可见
-    setup_logging("DEBUG" if args.debug else None, namespaces=("routing", "server"))
+    setup_logging(
+        "DEBUG" if args.debug else None,
+        namespaces=("routing", "server", "orchestration"),
+    )
 
     token = args.token or os.getenv("SERVER_AUTH_TOKEN", "").strip() or None
 

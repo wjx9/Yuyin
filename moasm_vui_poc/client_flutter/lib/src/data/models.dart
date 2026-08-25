@@ -39,6 +39,81 @@ class MusicInfo {
   }
 }
 
+class CalendarEvent {
+  final String title;
+  final DateTime start;
+  final DateTime end;
+  final String location;
+  final String description;
+
+  const CalendarEvent({
+    required this.title,
+    required this.start,
+    required this.end,
+    this.location = '',
+    this.description = '',
+  });
+
+  static CalendarEvent? tryFrom(Object? data) {
+    if (data is! Map || data['kind'] != 'calendar_event') return null;
+    try {
+      final title = data['title'];
+      final start = data['start_time'];
+      final end = data['end_time'];
+      if (title is! String || title.trim().isEmpty || start is! String || end is! String) return null;
+      return CalendarEvent(
+        title: title,
+        start: DateTime.parse(start),
+        end: DateTime.parse(end),
+        location: data['location'] is String ? data['location'] as String : '',
+        description: data['description'] is String ? data['description'] as String : '',
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
+class ScheduleAction {
+  final String action;
+  final String title;
+  final DateTime? triggerTime;
+  final DateTime? endTime;
+  final int? durationSeconds;
+  final String description;
+
+  const ScheduleAction({
+    required this.action,
+    required this.title,
+    this.triggerTime,
+    this.endTime,
+    this.durationSeconds,
+    this.description = '',
+  });
+
+  static ScheduleAction? tryFrom(Object? data) {
+    if (data is! Map || data['kind'] != 'schedule_action') return null;
+    final action = data['action'];
+    final title = data['title'];
+    if (action is! String || title is! String || action.isEmpty || title.isEmpty) return null;
+    try {
+      final triggerRaw = data['trigger_time'];
+      final endRaw = data['end_time'];
+      final durationRaw = data['duration_seconds'];
+      return ScheduleAction(
+        action: action,
+        title: title,
+        triggerTime: triggerRaw is String ? DateTime.parse(triggerRaw) : null,
+        endTime: endRaw is String ? DateTime.parse(endRaw) : null,
+        durationSeconds: durationRaw is int ? durationRaw : null,
+        description: data['description'] is String ? data['description'] as String : '',
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
 /// UI 层一条消息（聊天气泡）。assistant 在等服务端时先放一条 pending 占位。
 class ChatTurn {
   final Sender sender;
@@ -91,6 +166,8 @@ class ChatReply {
   final String intent;
   final String sessionId;
   final MusicInfo? music;
+  final CalendarEvent? calendarEvent;
+  final ScheduleAction? scheduleAction;
   final List<Map<String, dynamic>>? a2ui;
 
   const ChatReply({
@@ -98,6 +175,8 @@ class ChatReply {
     required this.intent,
     required this.sessionId,
     this.music,
+    this.calendarEvent,
+    this.scheduleAction,
     this.a2ui,
   });
 
@@ -107,6 +186,8 @@ class ChatReply {
       intent: (json['intent'] ?? '') as String,
       sessionId: (json['session_id'] ?? '') as String,
       music: MusicInfo.tryFrom(json['data']),
+      calendarEvent: CalendarEvent.tryFrom(json['data']),
+      scheduleAction: ScheduleAction.tryFrom(json['data']),
       a2ui: _a2uiFrom(json['a2ui']),
     );
   }

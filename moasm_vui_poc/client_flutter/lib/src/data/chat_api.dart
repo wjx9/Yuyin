@@ -2,7 +2,7 @@
 ///
 /// 契约（README §8.10）：
 ///   GET  /health?platform=mobile -> { status, capabilities }
-///   POST /chat   { query, session_id, user_id?, location?, platform } -> { text, intent, session_id }
+///   POST /chat   { query, session_id, user_id?, location?, location_source?, platform } -> { text, intent, session_id }
 ///   鉴权(可选)    `Authorization: Bearer <token>`
 ///
 /// 本客户端固定声明 platform=mobile：服务端据此屏蔽 PC-only 能力（如 music_control——
@@ -59,6 +59,7 @@ class ChatApi {
     required String query,
     required String sessionId,
     String? location,
+    String? locationSource,
   }) async {
     final payload = <String, dynamic>{
       'query': query,
@@ -66,6 +67,8 @@ class ChatApi {
       'user_id': userId,
       'platform': platform,
       if (location != null && location.isNotEmpty) 'location': location,
+      if (locationSource != null && locationSource.isNotEmpty)
+        'location_source': locationSource,
     };
     final json = await _send('POST', '/chat', payload);
     return ChatReply.fromJson(json);

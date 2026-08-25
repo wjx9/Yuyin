@@ -2,6 +2,9 @@
     <!-- 联网调 serve.py；录音用于端侧语音识别(ASR) -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM"/>
 
     <application
         android:label="语音助手"
@@ -49,6 +52,12 @@
         <!-- Android 11+ 包可见性：speech_to_text 需要能看到系统语音识别服务 -->
         <intent>
             <action android:name="android.speech.RecognitionService"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER"/>
         </intent>
         <!-- step 3.1：url_launcher 要拉起网易云音乐 app 的 orpheus:// 深链 + 网页兜底 -->
         <intent>

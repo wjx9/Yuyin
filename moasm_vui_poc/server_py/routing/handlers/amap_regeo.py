@@ -18,6 +18,11 @@ class AmapRegeoHandler(Handler):
 
     def handle(self, query: str, context: RouteContext) -> RouteResult:
         location = context.location or self._default_location
+        location_source = context.metadata.get("location_source", "unknown")
+        import logging
+        logging.getLogger("routing.handlers.amap_regeo").info(
+            "当前位置输入：source=%s，location=%s", location_source, location
+        )
         try:
             point = self._service.reverse_geocode(location)
         except AmapError as error:
@@ -26,4 +31,10 @@ class AmapRegeoHandler(Handler):
         text = f"你当前的位置是：{point.formatted_address}"
         if point.adcode:
             text += f"；行政区划码：{point.adcode}"
-        return RouteResult(text=text, data=point, intent=self.intent)
+        return RouteResult(
+            text=text,
+            data=point,
+            intent=self.intent,
+            source="高德 Web 服务 API",
+            method=f"{location_source} 坐标 -> 高德逆地理编码",
+        )

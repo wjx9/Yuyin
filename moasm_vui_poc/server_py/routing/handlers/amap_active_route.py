@@ -47,8 +47,8 @@ class _AmapActiveRouteHandler(Handler):
     mode_words = ""
 
     slots = (
-        SlotSpec("origin", "string", "出发地点，只填写地点名称；必填"),
-        SlotSpec("destination", "string", "目的地，只填写地点名称；必填"),
+        SlotSpec("origin", "string", "出发地点，只填写地点名称；如果手机提供了当前位置且用户未说明起点，可以使用当前位置"),
+        SlotSpec("destination", "string", "目的地，只填写地点名称；必填", required=True),
         SlotSpec("origin_city", "string", "出发地点所在城市；无法判断时不要填写"),
         SlotSpec("destination_city", "string", "目的地所在城市；无法判断时不要填写"),
     )
@@ -64,7 +64,11 @@ class _AmapActiveRouteHandler(Handler):
         origin_city = context.slots.get("origin_city") or ""
         destination_city = context.slots.get("destination_city") or ""
 
-        origin_location = (context.location or self._default_location) if origin in _HERE_WORDS else None
+        origin_location = context.location or self._default_location
+        if not origin and origin_location:
+            origin = "我这里"
+        if origin not in _HERE_WORDS:
+            origin_location = None
         if not origin or not destination:
             return RouteResult(
                 text=f"请告诉我{self.mode_name}的起点和终点，例如“从深圳宝安区{self.mode_words}到南山科技园”。",
@@ -77,7 +81,11 @@ class _AmapActiveRouteHandler(Handler):
                 kwargs["origin_location"] = origin_location
             route = self._service.plan(origin, destination, **kwargs)
         except AmapError as error:
-            return RouteResult(text=f"{self.mode_name}路线查询失败：{error}", intent=self.intent)
+            return RouteResult(
+                text=f"{self.mode_name}路线查询失败：{error}",
+                intent=self.intent,
+                status="failed",
+            )
 
         text = (
             f"从{route.origin.formatted_address}{self.mode_name}到{route.destination.formatted_address}，"

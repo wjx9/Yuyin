@@ -60,8 +60,14 @@ class AmapHandler(Handler):
         try:
             result = self._service.ask(query, location=context.location, preparsed=preparsed)
         except AmapError as e:
-            return RouteResult(text=f"地图查询失败：{e}", intent=self.intent)
-        return RouteResult(text=result.text, data=result, intent=self.intent)
+            return RouteResult(text=f"地图查询失败：{e}", intent=self.intent, status="failed")
+        return RouteResult(
+            text=result.text,
+            data=result,
+            intent=self.intent,
+            # 高德有时只返回可读说明，未必能解析出结构化 POI；不能据此否定成功响应。
+            status="success",
+        )
 
 
 _PARSER_SYSTEM = (

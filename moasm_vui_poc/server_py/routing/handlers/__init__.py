@@ -16,6 +16,10 @@ from .amap_driving import AmapDrivingHandler
 from .amap_active_route import AmapBicyclingHandler, AmapWalkingHandler
 from .amap_transit import AmapTransitHandler
 from .amap_regeo import AmapRegeoHandler
+from .exa_search import ExaSearchHandler
+from .calendar import CalendarCreateHandler
+from .schedule import AlarmCreateHandler, ReminderCreateHandler, TimerCreateHandler
+
 
 __all__ = [
     "AmapHandler",
@@ -37,4 +41,9 @@ __all__ = [
     "AmapWalkingHandler",
     "AmapTransitHandler",
     "AmapRegeoHandler",
+    "ExaSearchHandler",
+    "CalendarCreateHandler",
+    "AlarmCreateHandler",
+    "TimerCreateHandler",
+    "ReminderCreateHandler",
 ]

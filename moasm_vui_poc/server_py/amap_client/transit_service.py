@@ -72,8 +72,8 @@ class TransitRouteService:
         if origin_location and self._regeo_service:
             origin_point = self._regeo_service.reverse_geocode(origin_location)
         else:
-            origin_point = self._geocode_service.geocode(origin, city=origin_city)
-        destination_point = self._geocode_service.geocode(destination, city=destination_city)
+            origin_point = self._geocode_service.resolve_place(origin, city=origin_city)
+        destination_point = self._geocode_service.resolve_place(destination, city=destination_city)
         if not origin_point.adcode or not destination_point.adcode:
             raise AmapError("公交路线缺少起点或终点的行政区划码")
 

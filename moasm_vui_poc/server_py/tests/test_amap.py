@@ -178,6 +178,23 @@ def test_rest_status_zero_raises():
         AmapRestClient(key="K", session=session).around(location="1,2", keywords="x")
 
 
+def test_rest_network_error_does_not_expose_key():
+    import requests
+
+    class FailingSession:
+        def get(self, url, params=None, timeout=None):
+            raise requests.ConnectionError(
+                "HTTPSConnectionPool(host='restapi.amap.com'): "
+                "https://restapi.amap.com/v3/geocode/geo?key=SECRET_KEY"
+            )
+
+    with pytest.raises(AmapError) as error:
+        AmapRestClient(key="SECRET_KEY", session=FailingSession()).geocode(address="深圳")
+
+    assert "SECRET_KEY" not in str(error.value)
+    assert "检查网络" in str(error.value)
+
+
 def test_rest_service_uses_around_when_location_given():
     pois = [
         {
@@ -401,6 +418,89 @@ def test_geocode_raises_when_no_result():
         GeoCodeService(AmapRestClient(key="K", session=session)).geocode("不存在的地址")
 
 
+def test_resolve_place_prefers_city_matched_poi():
+    from amap_client.geocode_service import GeoCodeService
+    from amap_client.rest_client import AmapRestClient
+
+    session = MultiGetSession({
+        "text": _rest_ok([
+            {
+                "name": "推车卤鹅",
+                "location": "116.639465,23.658366",
+                "adcode": "445102",
+                "cityname": "潮州市",
+            },
+            {
+                "name": "TCL国际E城",
+                "location": "113.951000,22.573000",
+                "adcode": "440305",
+                "cityname": "深圳市",
+            },
+        ]),
+    })
+
+    point = GeoCodeService(AmapRestClient(key="K", session=session)).resolve_place(
+        "TCL国际E城", city="深圳"
+    )
+
+    assert point.formatted_address == "TCL国际E城"
+    assert point.location == "113.951000,22.573000"
+    assert point.adcode == "440305"
+    assert session.calls == [
+        {
+            "path": "text",
+            "params": {
+                "keywords": "TCL国际E城",
+                "city": "深圳",
+                "offset": 5,
+                "page": 1,
+                "extensions": "all",
+                "key": "K",
+            },
+        }
+    ]
+
+
+def test_resolve_place_falls_back_to_geocode_when_poi_has_no_match():
+    from amap_client.geocode_service import GeoCodeService
+    from amap_client.rest_client import AmapRestClient
+
+    session = MultiGetSession({
+        "text": _rest_ok([]),
+        "geo": _geocode_ok("440305"),
+    })
+
+    point = GeoCodeService(AmapRestClient(key="K", session=session)).resolve_place(
+        "深圳市南山区科技园", city="深圳"
+    )
+
+    assert point.location == "114.057868,22.543099"
+    assert [call["path"] for call in session.calls] == ["text", "geo"]
+
+
+def test_resolve_place_rejects_wrong_city_poi():
+    from amap_client.geocode_service import GeoCodeService
+    from amap_client.rest_client import AmapRestClient
+
+    session = MultiGetSession({
+        "text": _rest_ok([
+            {
+                "name": "推车卤鹅",
+                "location": "116.639465,23.658366",
+                "adcode": "445102",
+                "cityname": "潮州市",
+            }
+        ]),
+        "geo": {"status": "0", "info": "ENGINE_RESPONSE_DATA_ERROR", "infocode": "30001"},
+    })
+
+    with pytest.raises(AmapError, match="未能定位地点"):
+        GeoCodeService(AmapRestClient(key="K", session=session)).resolve_place(
+            "TCL国际E城", city="深圳"
+        )
+    assert [call["path"] for call in session.calls] == ["text", "geo"]
+
+
 def _geocode_ok(adcode="440300"):
     return {
         "status": "1",
@@ -537,12 +637,41 @@ def test_amap_weather_forecast_handler_selects_tomorrow():
     assert "阵雨" in result.text
     assert "2026-08-19" not in result.text
 
+
+def test_amap_weather_forecast_handler_keeps_the_available_window_for_unparsed_time():
+    from amap_client.models import WeatherDay, WeatherForecast
+    from routing.handler import RouteContext
+    from routing.handlers.amap_weather_forecast import AmapWeatherForecastHandler
+
+    class FakeWeatherService:
+        def forecast(self, city):
+            return WeatherForecast(
+                city=city,
+                days=[
+                    WeatherDay("2026-08-21", "晴", "晴", "32", "27"),
+                    WeatherDay("2026-08-22", "多云", "阵雨", "31", "26"),
+                ],
+            )
+
+    result = AmapWeatherForecastHandler(FakeWeatherService()).handle(
+        "深圳周六天气", RouteContext(slots={"city": "深圳", "days": 1})
+    )
+
+    assert "2026-08-21" in result.text
+    assert "2026-08-22" in result.text
+
 def test_driving_route_resolves_two_addresses_then_plans_route():
     from amap_client.driving_service import DrivingRouteService
     from amap_client.geocode_service import GeoCodeService
     from amap_client.rest_client import AmapRestClient
 
     session = MultiGetSession({
+        "text": _rest_ok([{
+            "name": "测试地点",
+            "location": "113.946040,22.544610",
+            "adcode": "440306",
+            "cityname": "深圳市",
+        }]),
         "geo": {
             "status": "1",
             "info": "OK",
@@ -585,11 +714,11 @@ def test_driving_route_resolves_two_addresses_then_plans_route():
         destination_city="深圳",
     )
 
-    assert session.calls[0]["path"] == "geo"
-    assert session.calls[0]["params"]["address"] == "深圳宝安区"
+    assert session.calls[0]["path"] == "text"
+    assert session.calls[0]["params"]["keywords"] == "深圳宝安区"
 
-    assert session.calls[1]["path"] == "geo"
-    assert session.calls[1]["params"]["address"] == "深圳南山区科技园"
+    assert session.calls[1]["path"] == "text"
+    assert session.calls[1]["params"]["keywords"] == "深圳南山区科技园"
 
     assert session.calls[2]["path"] == "driving"
     assert session.calls[2]["params"]["origin"] == "113.946040,22.544610"
@@ -654,13 +783,51 @@ def test_amap_driving_handler_asks_for_missing_places():
     assert "起点和终点" in result.text
 
 
+def test_amap_driving_handler_uses_mobile_location_when_origin_is_omitted():
+    from amap_client.models import DrivingRoute, GeoPoint
+    from routing.handler import RouteContext
+    from routing.handlers.amap_driving import AmapDrivingHandler
+
+    class SpyDrivingService:
+        def __init__(self):
+            self.args = None
+
+        def plan(self, origin, destination, **kwargs):
+            self.args = (origin, destination, kwargs)
+            return DrivingRoute(
+                origin=GeoPoint("当前位置", "113.9,22.5"),
+                destination=GeoPoint("南山科技园", "113.95,22.6"),
+                distance_m=1000,
+                duration_s=300,
+            )
+
+    service = SpyDrivingService()
+    result = AmapDrivingHandler(service).handle(
+        "去哪怎么走",
+        RouteContext(
+            platform="mobile",
+            location="113.9,22.5",
+            slots={"destination": "南山科技园"},
+        ),
+    )
+
+    assert result.status == "success"
+    assert service.args[0] == "我这里"
+    assert service.args[2]["origin_location"] == "113.9,22.5"
+
+
 def test_active_route_service_uses_selected_rest_method():
     from amap_client.active_route_service import ActiveRouteService
     from amap_client.geocode_service import GeoCodeService
     from amap_client.rest_client import AmapRestClient
 
     session = MultiGetSession({
-        "geo": _geocode_ok(),
+        "text": _rest_ok([{
+            "name": "测试地点",
+            "location": "114.057868,22.543099",
+            "adcode": "440300",
+            "cityname": "深圳市",
+        }]),
         "walking": {
             "status": "1",
             "info": "OK",
@@ -685,6 +852,12 @@ def test_transit_route_service_uses_adcodes_and_extracts_bus_line():
     from amap_client.transit_service import TransitRouteService
 
     session = MultiGetSession({
+        "text": _rest_ok([{
+            "name": "测试地点",
+            "location": "114.057868,22.543099",
+            "adcode": "440300",
+            "cityname": "深圳市",
+        }]),
         "geo": _geocode_ok("440300"),
         "integrated": {
             "status": "1",
@@ -763,6 +936,23 @@ def test_amap_transit_handler_renders_transit_summary():
     assert "地铁1号线" in result.text
 
 
+def test_amap_transit_handler_marks_provider_error_as_failed():
+    from amap_client.errors import AmapError
+    from routing.handler import RouteContext
+    from routing.handlers.amap_transit import AmapTransitHandler
+
+    class FailingTransitService:
+        def plan(self, origin, destination, **kwargs):
+            raise AmapError("未能定位地点：起点")
+
+    result = AmapTransitHandler(FailingTransitService()).handle(
+        "从A坐地铁到B", RouteContext(slots={"origin": "A", "destination": "B"})
+    )
+
+    assert result.status == "failed"
+    assert "公交路线查询失败" in result.text
+
+
 def test_regeo_service_turns_location_into_address_and_adcode():
     from amap_client.regeo_service import RegeoService
     from amap_client.rest_client import AmapRestClient
@@ -797,7 +987,12 @@ def test_driving_route_uses_gps_origin_when_supplied():
             "status": "1", "info": "OK",
             "regeocode": {"formatted_address": "当前位置", "addressComponent": {"adcode": "440305"}},
         },
-        "geo": _geocode_ok(),
+        "text": _rest_ok([{
+            "name": "目的地",
+            "location": "113.946040,22.544610",
+            "adcode": "440305",
+            "cityname": "深圳市",
+        }]),
         "driving": {
             "status": "1", "info": "OK",
             "route": {"paths": [{"cost": {"distance": "1000", "duration": "300"}}]},
@@ -809,6 +1004,6 @@ def test_driving_route_uses_gps_origin_when_supplied():
     route = service.plan("我这里", "目的地", origin_location="113.946,22.545")
 
     assert session.calls[0]["path"] == "regeo"
-    assert session.calls[1]["path"] == "geo"
+    assert session.calls[1]["path"] == "text"
     assert session.calls[2]["params"]["origin"] == "113.946,22.545"
     assert route.origin.formatted_address == "当前位置"

@@ -9,7 +9,8 @@ import urllib.error
 
 import pytest
 
-from routing.handler import RouteContext, RouteResult
+from orchestration.task_models import AgentAction, AgentDecision, RequestAnalysis
+from routing.handler import IntentSpec, RouteContext, RouteResult
 from server.auth import Credentials, CredentialProvider, MockCredentialProvider
 from server.http_server import build_http_server
 from server.schemas import BadRequest, ChatRequest, ChatResponse
@@ -32,6 +33,9 @@ class FakeDispatcher:
     def intents_for(self, platform="pc"):
         return [i for i in self._all_intents if not (i in self._PC_ONLY and platform == "mobile")]
 
+    def visible_specs(self, platform="pc"):
+        return [IntentSpec(intent, intent) for intent in self.intents_for(platform)]
+
     @property
     def intents(self):
         return self.intents_for("pc")
@@ -40,10 +44,42 @@ class FakeDispatcher:
         self.calls.append({"query": query, "context": context})
         return RouteResult(text=f"回复:{query}", intent="chitchat")
 
+    def execute(self, *, intent, query, context, slots=None):
+        # 旧测试桩的具体结果都定义在 dispatch() 覆写中，复用它以保持测试关注点不变。
+        return self.dispatch(query, context)
+
+
+class FakeComposer:
+    """隔离 Graph 的总结节点，避免 server 单测访问真实 Gemini。"""
+
+    def compose(self, *, query, intent, tool_text, history):
+        return tool_text
+
+
+class FakeAnalyzer:
+    """每轮只回显原始问题，隔离服务端测试的分析模型依赖。"""
+
+    def analyze(self, *, query, history):
+        return RequestAnalysis(goal=query)
+
+
+class FakeDecider:
+    """每轮调用一次 chitchat，下一轮结束，隔离决策模型依赖。"""
+
+    def decide(
+        self, *, query, analysis, observations, specs, history, remaining_steps, executed_actions
+    ):
+        if not observations:
+            return AgentDecision(actions=[AgentAction("chitchat", query)])
+        return AgentDecision(finished=True)
+
 
 def _service(dispatcher=None, credentials=None) -> ChatService:
     return ChatService(
         dispatcher=dispatcher or FakeDispatcher(),
+        composer=FakeComposer(),
+        analyzer=FakeAnalyzer(),
+        decider=FakeDecider(),
         store=SessionStore(),
         credentials=credentials or MockCredentialProvider(tripnow_union_id="UNION-TEST"),
     )
@@ -172,7 +208,14 @@ def test_real_auth_provider_seam():
             return Credentials(tripnow_union_id=f"real-{user_id}", mocked=False)
 
     disp = FakeDispatcher()
-    svc = ChatService(dispatcher=disp, store=SessionStore(), credentials=StubProvider())
+    svc = ChatService(
+        dispatcher=disp,
+        composer=FakeComposer(),
+        analyzer=FakeAnalyzer(),
+        decider=FakeDecider(),
+        store=SessionStore(),
+        credentials=StubProvider(),
+    )
     svc.handle_chat(ChatRequest(query="x", session_id="s1", user_id="u9"))
     assert disp.calls[0]["context"].union_id == "real-u9"
 

@@ -48,6 +48,10 @@ class Dispatcher:
         """各能力的 (id, description)，供呈现层生成用法介绍等（PC 全量）。"""
         return list(self._specs)
 
+    def visible_specs(self, platform: str = "pc") -> list[IntentSpec]:
+        """返回指定端可用的能力说明，供 LangGraph Planner 选择任务。"""
+        return self._specs_for(platform)
+
     def _specs_for(self, platform: str) -> list[IntentSpec]:
         return [h.spec() for h in self._handlers.values() if self._visible(h, platform)]
 
@@ -55,6 +59,44 @@ class Dispatcher:
         return self._classifier.classify(
             query, self._specs_for(platform), default=self._default, history=history
         )
+
+    def execute(
+        self,
+        *,
+        intent: str,
+        query: str,
+        context: RouteContext,
+        slots: dict | None = None,
+    ) -> RouteResult:
+        """跳过分类，直接执行 Planner 已选定的当前端可用 Handler。"""
+        handler = self._handlers.get(intent)
+        if handler is None:
+            return RouteResult(
+                text=f"任务无法执行：系统未注册能力“{intent}”。",
+                intent=intent,
+            )
+        if not self._visible(handler, context.platform):
+            return RouteResult(
+                text=f"任务无法执行：能力“{intent}”不支持当前设备。",
+                intent=intent,
+            )
+
+        context.slots = dict(slots or {})
+        started = time.perf_counter()
+        _log.info(
+            "Graph 直调 -> 技能 %r (%s)，槽位 %s",
+            intent,
+            type(handler).__name__,
+            context.slots or "{}",
+        )
+        result = handler.handle(query, context)
+        _log.info(
+            "Graph 直调完成：技能 %r，耗时 %.0fms，结果长度 %d",
+            result.intent or intent,
+            (time.perf_counter() - started) * 1000,
+            len(result.text or ""),
+        )
+        return result
 
     def dispatch(self, query: str, context: RouteContext | None = None) -> RouteResult:
         context = context or RouteContext()

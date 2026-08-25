@@ -16,6 +16,9 @@ import '../data/chat_api.dart';
 import '../data/models.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
+import '../services/location_service.dart';
+import '../services/calendar_service.dart';
+import '../services/reminder_service.dart';
 import 'settings_controller.dart';
 
 /// 助手当前状态，驱动 UI（麦克风按钮形态、状态提示语）。
@@ -25,10 +28,24 @@ class ChatController extends ChangeNotifier {
   final SettingsController settings;
   final SpeechService speech;
   final TtsService tts;
+  final LocationService location;
+  final CalendarService calendar = CalendarService();
+  final ReminderService reminder = ReminderService();
 
-  ChatController({required this.settings, required this.speech, required this.tts}) {
+  ChatController({
+    required this.settings,
+    required this.speech,
+    required this.tts,
+    required this.location,
+  }) {
     _api = _buildApi();
     settings.addListener(_onSettingsChanged);
+  }
+
+  Future<void> openCalendar() async {
+    if (!await calendar.open()) {
+      _pushSystem('无法打开系统日历，请确认手机已安装日历应用。', isError: true);
+    }
   }
 
   // ---- 对外状态（UI 读取） ----
@@ -135,10 +152,20 @@ class ChatController extends ChangeNotifier {
 
     final pendingIndex = messages.length - 1;
     try {
+      String? currentLocation;
+      try {
+        currentLocation = await location.currentLocation();
+      } catch (_) {
+        // 定位不可用时继续使用设置页中的固定坐标，不阻塞普通聊天。
+        currentLocation = null;
+      }
+
+      final locationSource = currentLocation == null ? 'configured_location' : 'mobile_gps';
       final reply = await _api.chat(
         query: q,
         sessionId: settings.config.sessionId,
-        location: settings.config.location,
+        location: currentLocation ?? settings.config.location,
+        locationSource: locationSource,
       );
       messages[pendingIndex] = ChatTurn(
         sender: Sender.assistant,
@@ -154,6 +181,31 @@ class ChatController extends ChangeNotifier {
       // step 3.1：命中点歌 → 拉起网易云音乐 app 播放（在线播放不在服务端本机，跳转到官方 app）。
       // 不 await，避免跳转卡住本轮；气泡上也留了按钮可手动重开。
       if (reply.music != null) unawaited(openMusic(reply.music!));
+      if (reply.calendarEvent != null) {
+        debugPrint(
+          'Calendar action received: title=${reply.calendarEvent!.title}, '
+          'start=${reply.calendarEvent!.start.toIso8601String()}, '
+          'end=${reply.calendarEvent!.end.toIso8601String()}',
+        );
+        final opened = await calendar.create(reply.calendarEvent!);
+        if (!opened) _pushSystem('无法打开日历创建页面，请确认手机已安装日历应用。', isError: true);
+      }
+      if (reply.scheduleAction != null) {
+        final action = reply.scheduleAction!;
+        debugPrint(
+          'Schedule action received: action=${action.action}, title=${action.title}, '
+          'trigger=${action.triggerTime?.toIso8601String()}, duration=${action.durationSeconds}',
+        );
+        final opened = await reminder.create(action);
+        if (!opened) {
+          _pushSystem(
+            action.action == 'reminder'
+                ? '无法打开日历提醒页面，请确认手机已安装日历应用。'
+                : '无法打开系统时钟页面，请确认手机支持闹钟或倒计时功能。',
+            isError: true,
+          );
+        }
+      }
 
       await tts.speak(reply.text); // awaitSpeakCompletion=true，播完才返回
     } on ApiException catch (e) {

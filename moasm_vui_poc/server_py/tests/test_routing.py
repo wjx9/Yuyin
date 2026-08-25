@@ -226,6 +226,43 @@ def test_dispatcher_passes_slots_to_handler_context():
     assert seen == {"keyword": "深圳"}
 
 
+def test_dispatcher_execute_skips_classification_and_passes_slots():
+    seen = {}
+
+    class SlottedHandler(Handler):
+        intent = "news"
+        description = "搜新闻"
+        slots = (SlotSpec("keyword", "string", "检索词"),)
+
+        def handle(self, query, context):
+            seen.update(context.slots)
+            return RouteResult(text=f"news:{query}", intent=self.intent)
+
+    gemini = FakeGemini(call="chitchat")
+    d = Dispatcher([EchoHandler("chitchat"), SlottedHandler()], GeminiClassifier(gemini), default_intent="chitchat")
+
+    result = d.execute(
+        intent="news",
+        query="深圳新闻",
+        context=RouteContext(),
+        slots={"keyword": "深圳"},
+    )
+
+    assert result.text == "news:深圳新闻"
+    assert seen == {"keyword": "深圳"}
+    assert gemini.last_declarations is None
+
+
+def test_dispatcher_execute_rejects_hidden_mobile_handler():
+    d = _pc_only_dispatcher(FakeGemini(call="chitchat"))
+    result = d.execute(
+        intent="music_control",
+        query="暂停",
+        context=RouteContext(platform="mobile"),
+    )
+    assert "不支持当前设备" in result.text
+
+
 def test_dispatcher_clears_slots_when_falling_back():
     # 分类命中不可用意图时回退默认，槽位是按原意图抽的，不得带给默认 handler
     from routing.classifier import IntentClassifier
@@ -328,6 +365,15 @@ def test_gemini_expands_history_into_contents():
         {"role": "model", "parts": [{"text": "你好小明"}]},
         {"role": "user", "parts": [{"text": "现在呢"}]},
     ]
+
+
+def test_gemini_can_request_json_response_mode():
+    sess = _RecordingSession()
+    GeminiClient("key", session=sess).generate(
+        "输出 JSON", response_mime_type="application/json"
+    )
+
+    assert sess.posted_json["generationConfig"]["responseMimeType"] == "application/json"
 
 
 def test_chitchat_handler_forwards_history():

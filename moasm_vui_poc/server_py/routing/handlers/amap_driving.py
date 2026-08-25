@@ -57,12 +57,13 @@ class AmapDrivingHandler(Handler):
         SlotSpec(
             "origin",
             "string",
-            "驾车出发地点，只填写地点名称，例如“深圳宝安区”“杭州西湖”；必填",
+            "驾车出发地点，只填写地点名称；如果用户没有说出起点但手机提供了当前位置，可以使用当前位置",
         ),
         SlotSpec(
             "destination",
             "string",
             "驾车目的地，只填写地点名称，例如“深圳南山科技园”“上海虹桥站”；必填",
+            required=True,
         ),
         SlotSpec(
             "origin_city",
@@ -88,7 +89,11 @@ class AmapDrivingHandler(Handler):
         origin_city = context.slots.get("origin_city") or ""
         destination_city = context.slots.get("destination_city") or ""
 
-        origin_location = (context.location or self._default_location) if origin in _HERE_WORDS else None
+        origin_location = context.location or self._default_location
+        if not origin and origin_location:
+            origin = "我这里"
+        if origin not in _HERE_WORDS:
+            origin_location = None
         if not origin or not destination:
             return RouteResult(
                 text="请告诉我驾车的起点和终点，例如“从深圳宝安区开车到南山科技园”。",
@@ -104,6 +109,7 @@ class AmapDrivingHandler(Handler):
             return RouteResult(
                 text=f"驾车路线查询失败：{error}",
                 intent=self.intent,
+                status="failed",
             )
 
         text = (

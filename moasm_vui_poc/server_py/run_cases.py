@@ -31,7 +31,8 @@ for _s in (sys.stdout, sys.stderr):
 
 from dataclasses import dataclass, field
 
-from routing import RouteContext, SessionHistory, build_dispatcher, setup_logging
+from routing import RouteContext, SessionHistory, setup_logging
+from orchestration import build_assistant_graph
 
 
 @dataclass
@@ -66,9 +67,9 @@ CASES: list[Case] = [
 
 def main() -> int:
     setup_logging(None)  # 安静模式，避免路由日志淹没结果
-    dispatcher = build_dispatcher()
-    enabled = set(dispatcher.intents)
-    print(f"已启用意图：{', '.join(dispatcher.intents)}\n")
+    assistant = build_assistant_graph()
+    enabled = set(assistant.capabilities)
+    print(f"已启用意图：{', '.join(assistant.capabilities)}\n")
 
     history = SessionHistory(path=None)  # 进程内共享，验证闲聊记忆
     union_id = os.getenv("TRIPNOW_UNION_ID") or None
@@ -87,7 +88,7 @@ def main() -> int:
             continue
 
         ctx = RouteContext(union_id=union_id, location=location, history=history.turns)
-        result = dispatcher.dispatch(c.prompt, ctx)
+        result = assistant.run(c.prompt, ctx)
         history.append(c.prompt, result.text)
 
         print(f"命中  : {result.intent}（期望 {c.expect_intent}）")

@@ -52,8 +52,8 @@ class ActiveRouteService:
         if origin_location and self._regeo_service:
             origin_point = self._regeo_service.reverse_geocode(origin_location)
         else:
-            origin_point = self._geocode_service.geocode(origin, city=origin_city)
-        destination_point = self._geocode_service.geocode(destination, city=destination_city)
+            origin_point = self._geocode_service.resolve_place(origin, city=origin_city)
+        destination_point = self._geocode_service.resolve_place(destination, city=destination_city)
 
         request: Callable[..., dict[str, Any]] = getattr(self._client, self._mode)
         data = request(origin=origin_point.location, destination=destination_point.location)
