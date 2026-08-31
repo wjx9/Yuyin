@@ -37,6 +37,7 @@ _load_env()
 from routing import setup_logging
 from server import ChatService
 from server.http_server import build_http_server
+from store_client import StoreClient
 
 _log = logging.getLogger("server")
 
@@ -72,21 +73,37 @@ def main(argv: list[str] | None = None) -> int:
 
     token = args.token or os.getenv("SERVER_AUTH_TOKEN", "").strip() or None
 
+    # P2：配置了商店 → ChatService 按 user_id 装配（每个用户 内置 + 已选购 MCP 技能）。
+    store_url = os.getenv("SKILL_STORE_URL", "").strip()
+    store_client = StoreClient(store_url) if store_url else None
+
     try:
-        service = ChatService()
+        service = ChatService(store_client=store_client)
     except RuntimeError as e:
         print(f"启动失败：{e}", file=sys.stderr)
         return 1
 
-    httpd = build_http_server(service, host=args.host, port=args.port, auth_token=token)
+    httpd = build_http_server(
+        service,
+        host=args.host,
+        port=args.port,
+        auth_token=token,
+        skill_store_url=store_url or None,
+    )
 
     lan = _lan_ip()
     print("多能力助手服务端已启动")
     print(f"  本机访问 : http://127.0.0.1:{args.port}")
     print(f"  局域网   : http://{lan}:{args.port}    （手机与本机同一 WiFi 时用这个）")
     print(f"  鉴权     : {'开启 (Bearer Token)' if token else '关闭（局域网试用）'}")
-    print(f"  已启用能力: {', '.join(service.capabilities)}")
-    print("  接口     : POST /chat   GET /health    （Ctrl+C 退出）")
+    # banner 能力：商店模式打印缺省用户的（demo 默认选购）；否则内置（含本地 manifest）。
+    if store_client:
+        user = os.getenv("SKILL_STORE_USER", "").strip() or "demo"
+        banner_caps = service.capabilities_for_user(user)
+        print(f"  已启用能力: {', '.join(banner_caps)}    （商店模式，user={user}）")
+    else:
+        print(f"  已启用能力: {', '.join(service.capabilities)}")
+    print("  接口     : POST /chat   GET /health   GET /skill-store/（技能商店）")
 
     try:
         httpd.serve_forever()

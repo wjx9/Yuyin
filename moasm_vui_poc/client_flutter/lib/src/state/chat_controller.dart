@@ -60,10 +60,10 @@ class ChatController extends ChangeNotifier {
   bool get isBusy => status == AssistantStatus.thinking;
 
   ChatApi _buildApi() => ChatApi(
-        baseUrl: settings.config.serverUrl,
-        authToken: settings.config.authToken,
-        userId: settings.config.userId,
-      );
+    baseUrl: settings.config.serverUrl,
+    authToken: settings.config.authToken,
+    userId: settings.config.userId,
+  );
 
   void _onSettingsChanged() {
     // 服务端地址/鉴权可能变了，重建 api 并重新探活
@@ -102,7 +102,10 @@ class ChatController extends ChangeNotifier {
     if (status == AssistantStatus.thinking) return; // 正在等服务端，先不抢麦
 
     await tts.stop(); // 说话前先把上一条朗读停掉
-    final ok = await speech.init(onStatus: _onSpeechStatus, onError: _onSpeechError);
+    final ok = await speech.init(
+      onStatus: _onSpeechStatus,
+      onError: _onSpeechError,
+    );
     if (!ok) {
       _pushSystem('语音识别不可用：请检查麦克风权限，或改用下方文字输入。', isError: true);
       return;
@@ -125,7 +128,8 @@ class ChatController extends ChangeNotifier {
 
   void _onSpeechStatus(String s) {
     // 底层听写结束（done/notListening）时，若还停在 listening 态则复位
-    if ((s == 'done' || s == 'notListening') && status == AssistantStatus.listening) {
+    if ((s == 'done' || s == 'notListening') &&
+        status == AssistantStatus.listening) {
       status = AssistantStatus.idle;
       notifyListeners();
     }
@@ -146,25 +150,38 @@ class ChatController extends ChangeNotifier {
     if (q.isEmpty || status == AssistantStatus.thinking) return;
 
     messages.add(ChatTurn(sender: Sender.user, text: q));
-    messages.add(const ChatTurn(sender: Sender.assistant, text: '思考中…', pending: true));
+    messages.add(
+      const ChatTurn(sender: Sender.assistant, text: '思考中…', pending: true),
+    );
     status = AssistantStatus.thinking;
     notifyListeners();
 
     final pendingIndex = messages.length - 1;
     try {
-      String? currentLocation;
+      String? selectedLocation;
+      String locationSource = 'none';
       try {
-        currentLocation = await location.currentLocation();
-      } catch (_) {
-        // 定位不可用时继续使用设置页中的固定坐标，不阻塞普通聊天。
-        currentLocation = null;
+        final gpsLocation = await location.currentLocation();
+        if (gpsLocation != null && gpsLocation.trim().isNotEmpty) {
+          selectedLocation = gpsLocation.trim();
+          locationSource = 'mobile_gps';
+        }
+      } catch (error) {
+        // GPS 读取失败时继续尝试设置页的固定坐标，不阻塞普通聊天。
+        debugPrint('GPS unavailable, fallback to configured location: $error');
       }
-
-      final locationSource = currentLocation == null ? 'configured_location' : 'mobile_gps';
+      if (selectedLocation == null) {
+        final configuredLocation = settings.config.location?.trim();
+        if (configuredLocation != null && configuredLocation.isNotEmpty) {
+          selectedLocation = configuredLocation;
+          locationSource = 'configured_location';
+          debugPrint('Using configured location: $selectedLocation');
+        }
+      }
       final reply = await _api.chat(
         query: q,
         sessionId: settings.config.sessionId,
-        location: currentLocation ?? settings.config.location,
+        location: selectedLocation,
         locationSource: locationSource,
       );
       messages[pendingIndex] = ChatTurn(
@@ -225,7 +242,11 @@ class ChatController extends ChangeNotifier {
     for (final url in [music.deeplink, music.webUrl]) {
       if (url.isEmpty) continue;
       try {
-        if (await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)) return;
+        if (await launchUrl(
+          Uri.parse(url),
+          mode: LaunchMode.externalApplication,
+        ))
+          return;
       } catch (_) {
         // 换下一个 url 兜底
       }

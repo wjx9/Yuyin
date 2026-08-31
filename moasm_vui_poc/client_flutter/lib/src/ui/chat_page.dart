@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../state/chat_controller.dart';
 import '../workbuddy_debug/workbuddy_debug_page.dart';
 import 'settings_page.dart';
+import 'skill_store_page.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/mic_button.dart';
 
@@ -69,6 +70,7 @@ class _ChatPageState extends State<ChatPage> {
             IconButton(
               tooltip: 'WorkBuddy 调试台',
               icon: const Icon(Icons.account_tree_outlined),
+              visualDensity: VisualDensity.compact,
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const WorkBuddyDebugPage()),
               ),
@@ -76,21 +78,38 @@ class _ChatPageState extends State<ChatPage> {
           IconButton(
             tooltip: '已启用能力',
             icon: const Icon(Icons.auto_awesome),
+            visualDensity: VisualDensity.compact,
             onPressed: () => _showCapabilities(context, c),
+          ),
+          IconButton(
+            tooltip: '技能商店',
+            icon: const Icon(Icons.storefront_outlined),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SkillStorePage(
+                  // 选购成功后尽力同步能力清单（TTL ≤30s 内仍是旧清单，页面 hint 覆盖预期）
+                  onSkillsSaved: () => context.read<ChatController>().refreshHealth(),
+                ),
+              ),
+            ),
           ),
           IconButton(
             tooltip: '清空对话',
             icon: const Icon(Icons.delete_outline),
+            visualDensity: VisualDensity.compact,
             onPressed: c.messages.isEmpty ? null : c.clear,
           ),
           IconButton(
             tooltip: '打开日历',
             icon: const Icon(Icons.calendar_month_outlined),
+            visualDensity: VisualDensity.compact,
             onPressed: c.openCalendar,
           ),
           IconButton(
             tooltip: '设置',
             icon: const Icon(Icons.settings),
+            visualDensity: VisualDensity.compact,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SettingsPage()),
             ),

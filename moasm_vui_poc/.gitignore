@@ -4,6 +4,8 @@ venv/
 
 # 密钥与本地配置
 .env
+*.pem
+skill_store/store.db
 
 # Python
 __pycache__/

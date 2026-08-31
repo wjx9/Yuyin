@@ -1,0 +1,37 @@
+{
+  "skill_id": "eastmoney-mcp",
+  "name": "金融数据（东方财富）",
+  "icon": "📊",
+  "description": "基于东方财富数据库，自然语言查询 A股/港股/美股/基金/债券/宏观/指数数据，如「贵州茅台今天最新价」",
+  "intent": "eastmoney_mcp",
+  "pc_only": false,
+  "entry_tool": "mx_ashare_finance_data",
+  "query_slot": "query",
+  "keywords": ["市盈率", "财报", "最新价", "最新价格", "涨停", "板块", "基金", "债券", "宏观", "指数", "港股", "美股", "公告", "融资", "龙虎榜"],
+  "mcp_server": { "transport": "http", "url": "https://mxapi.eastmoney.com/mxds/mcp" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "em_api_key",
+        "label": "东方财富 API Key",
+        "type": "secret",
+        "required": true,
+        "help": "在妙想官网（mxapi.eastmoney.com/mxds/doc/mcp-install.md）登录获取 EM_API_KEY",
+        "inject": { "where": "header", "name": "em_api_key" }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "mx_ashare_finance_data",
+      "description": "基于东方财富数据库，支持自然语言查询A股金融数据，覆盖A股股票基本资料、行情与技术指标、财务与估值、股本与股东结构、公司事件（IPO/增减持/股权激励/风险事件等）、量化风险指标（alpha/beta/夏普）等，单次请求最多支持500只股票，可发起多次请求。例如：格力电器的上市时间与最近5日的涨跌幅与换手率",
+      "input_schema": {
+        "type": "object",
+        "properties": { "query": { "type": "string", "description": "问句" } },
+        "required": ["query"]
+      }
+    }
+  ],
+  "default_status": "inactive"
+}

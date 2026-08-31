@@ -47,6 +47,7 @@ def build_assistant_graph(
     composer: ResultComposer | None = None,
     analyzer: RequestAnalyzer | None = None,
     decider: ActionDecider | None = None,
+    exclude_intents: set[str] | None = None,
 ) -> AssistantGraph:
     dispatcher = dispatcher or build_dispatcher()
 
@@ -59,6 +60,14 @@ def build_assistant_graph(
     if analyzer is None:
         analyzer = GeminiRequestAnalyzer(gemini)
     if decider is None:
-        decider = GeminiActionDecider(gemini, allowed_intents=_PLANNABLE_INTENTS)
+        # dispatcher.intents 已含内置 + MCP 技能（dispatcher.py:42 属性）；并集保留
+        # 未启用但已知的意图（tripnow 等），行为不回退。见 最终技术路线.md §4.4。
+        # 顶替内置（replaces）时，被顶替的意图也要从静态白名单里减去——否则白名单残留
+        # 仍允许该意图进 usable_specs（虽然没 spec 会被二次过滤，但保持语义一致更稳）。
+        plan = set(dispatcher.intents) | (_PLANNABLE_INTENTS - (exclude_intents or set()))
+        decider = GeminiActionDecider(
+            gemini,
+            allowed_intents=plan,
+        )
 
     return AssistantGraph(dispatcher, composer, analyzer, decider)

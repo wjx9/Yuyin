@@ -133,6 +133,13 @@ class GeminiActionDecider:
         executed_actions: list[str],
     ) -> AgentDecision:
         usable_specs = [spec for spec in specs if spec.id in self._allowed_intents]
+        # 关键词确定性收窄（修复 P3-进度记录 §3 的"内置抢跑 / chitchat 兜底"）：
+        # 某已购 MCP 技能的关键词命中用户原话 → 本轮 usable_specs 只留它，Gemini 必选
+        # 并正确填槽。内置能力不带 keywords，不会被误锁；多命中取命中数最多者。
+        forced = _keyword_match(usable_specs, query)
+        if forced is not None:
+            _log.info("关键词锁定技能：%s（usable_specs 收窄到它，防内置/闲聊抢跑）", forced.id)
+            usable_specs = [forced]
         prompt = (
             f"当前日期：{_today()}\n用户原话：{query}\n\n"
             f"最近历史对话：\n{_format_history(history)}\n\n"
@@ -148,6 +155,7 @@ class GeminiActionDecider:
             usable_specs=usable_specs,
             history=history,
             executed_actions=set(executed_actions),
+            forced_intent=forced.id if forced is not None else None,
         )
         if decision is None:
             raise AgentDecisionError("决策模型返回了非法动作")
@@ -168,8 +176,14 @@ class GeminiActionDecider:
         usable_specs: list[IntentSpec],
         history: list[Turn],
         executed_actions: set[str],
+        forced_intent: str | None = None,
     ) -> AgentDecision | None:
-        """请求一次 JSON；格式不合法时以相同协议修复一次。"""
+        """请求一次 JSON；格式不合法或绕过被锁定工具时以相同协议修复一次。
+
+        forced_intent 非空表示本轮被关键词收窄锁定的技能：只要它还没执行过，
+        模型就必须把它作为 action 调用（除非是追问必填槽位的合法澄清），
+        禁止用 finish + direct_answer 拿自身知识/闲聊兜底绕过（force_tool 守卫）。
+        """
         repair_note = ""
         for attempt in range(2):
             try:
@@ -192,7 +206,20 @@ class GeminiActionDecider:
             if decision is not None and not _has_only_repeated_actions(
                 decision, executed_actions
             ):
-                return decision
+                if not _forced_tool_violation(decision, forced_intent, executed_actions):
+                    return decision
+                _log.debug(
+                    "决策绕过被锁定工具 %s：尝试=%d",
+                    forced_intent,
+                    attempt + 1,
+                )
+                repair_note = (
+                    f"\n\n上一条输出绕过了被关键词锁定的技能 {forced_intent}。"
+                    f"该技能必须被调用：actions 里必须包含 intent={forced_intent} 的动作"
+                    f"（使用用户原话里已有的参数）；除非必填参数缺失，才返回 "
+                    "finish=true + follow_up 追问。不要用 direct_answer 或闲聊代替它。"
+                )
+                continue
             _log.debug(
                 "决策 JSON 未通过协议校验：尝试=%d，输出长度=%d，顶层类型=%s",
                 attempt + 1,
@@ -212,6 +239,8 @@ def _format_specs(specs: list[IntentSpec]) -> str:
     lines: list[str] = []
     for spec in specs:
         line = f"- intent={spec.id}: {spec.description}"
+        if spec.keywords:
+            line += "\n  触发关键词: " + "、".join(spec.keywords)
         if spec.slots:
             line += "\n  slots: " + "；".join(
                 f"{slot.name}({slot.type}{'，必填' if slot.required else ''}): {slot.description}"
@@ -219,6 +248,43 @@ def _format_specs(specs: list[IntentSpec]) -> str:
             )
         lines.append(line)
     return "\n".join(lines) or "（没有可用能力）"
+
+
+def _keyword_match(specs: list[IntentSpec], query: str) -> IntentSpec | None:
+    """关键词确定性收窄：命中最多的 spec 胜出；无命中返回 None。
+
+    只考虑声明了 keywords 的 spec（内置能力默认不带，不会被误锁）。
+    多 spec 命中数并列时取先出现者（deterministic）。
+    """
+    best: IntentSpec | None = None
+    best_count = 0
+    for spec in specs:
+        count = sum(1 for kw in spec.keywords if kw and kw in query)
+        if count > best_count:
+            best, best_count = spec, count
+    return best if best_count > 0 else None
+
+
+def _calls_intent(decision: AgentDecision, intent: str) -> bool:
+    return any(action.intent == intent for action in decision.actions)
+
+
+def _forced_tool_violation(
+    decision: AgentDecision, forced_intent: str | None, executed_actions: set[str]
+) -> bool:
+    """force_tool 守卫：关键词锁定且技能还没执行过时，模型必须调用它。
+
+    允许的例外：finish + follow_up 追问必填槽位（合法澄清，不是绕过）。
+    其余（finish+direct_answer 拿知识兜底、空决策、调别的工具被过滤成空）→ 判定非法，
+    触发一次修复。已执行过则不再强制（多轮决策的第二轮起放行）。
+    """
+    if forced_intent is None or forced_intent in executed_actions:
+        return False
+    if _calls_intent(decision, forced_intent):
+        return False
+    if decision.follow_up_intent:  # 追问必填参数是合法澄清，不是绕过
+        return False
+    return True
 
 
 def _format_analysis(analysis: RequestAnalysis) -> str:

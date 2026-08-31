@@ -49,6 +49,7 @@ def build_dispatcher(
     *,
     classifier: IntentClassifier | None = None,
     extra_handlers: list[Handler] | None = None,
+    exclude_intents: set[str] | None = None,
 ) -> Dispatcher:
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not gemini_key:
@@ -67,6 +68,15 @@ def build_dispatcher(
     _try_add_exa(handlers)
     _try_add_music163(handlers)
 
+    # 顶替内置（manifest.replaces）：从该用户的分流表里剔除被顶替的意图。
+    # 用户买了"顶替内置"的 MCP 技能后，同名内置不再出现在可用能力里，Gemini 只能选技能
+    # （语义"买了就用它"）。chitchat 是兜底，永不排除（防御：管理员配错也崩不了）。
+    if exclude_intents:
+        excluded = exclude_intents - {"chitchat"}
+        handlers = [h for h in handlers if h.intent not in excluded]
+
+    # 先过滤工厂内置实现，再追加适配器（例如 MCPHandler）。这样同一个 intent
+    # 可以由统一的 MCP facade 接管，而不会被后追加的 Handler 一并过滤掉。
     if extra_handlers:
         handlers.extend(extra_handlers)
 

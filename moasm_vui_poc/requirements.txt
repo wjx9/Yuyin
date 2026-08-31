@@ -1,3 +1,11 @@
+# 技能商店（P1/P2）依赖。安装：pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 requests>=2.31
 python-dotenv>=1.0
 langgraph>=1.0,<2
+
+# mcp 2.x 与 1.x API 不兼容（FastMCP→MCPServer、streamable_http_client、依赖 httpx2 非 httpx），
+# 2.1.1 是本机实测版本，升级前务必先核对（见 memory moasm-mcp-p1）。
+mcp==2.1.1
+# 商店后端（skill_store/）：fastapi + uvicorn。mcp 已拖入 starlette/uvicorn，这里显式声明顶层依赖。
+fastapi>=0.141
+uvicorn>=0.52

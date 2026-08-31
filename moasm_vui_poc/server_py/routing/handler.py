@@ -66,11 +66,17 @@ class RouteResult:
 
 @dataclass(frozen=True)
 class IntentSpec:
-    """供分类器使用的意图描述（含可选的槽位声明）。"""
+    """供分类器使用的意图描述（含可选的槽位声明）。
+
+    keywords：命中即**确定性收窄**到该能力——decide 层若发现某已购 MCP 技能的关键词
+    命中了用户原话，本轮 usable_specs 只留它，Gemini 必选并正确填槽（修复"内置抢跑/
+    chitchat 兜底"，见 P3-进度记录 §3）。内置能力默认不带 keywords。
+    """
 
     id: str
     description: str
     slots: tuple[SlotSpec, ...] = ()
+    keywords: tuple[str, ...] = ()
 
 
 class Handler(ABC):

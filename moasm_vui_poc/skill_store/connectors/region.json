@@ -1,0 +1,45 @@
+{
+  "skill_id": "region-mcp",
+  "name": "区域天气",
+  "icon": "🗺️",
+  "description": "查询指定区域的天气（需要先配置区域凭证）",
+  "intent": "region_forecast",
+  "pc_only": false,
+  "entry_tool": "get_region_forecast",
+  "query_slot": "city",
+  "keywords": ["区域天气", "区域预报"],
+  "mcp_server": { "transport": "http", "url": "http://127.0.0.1:9100/mcp" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "type": "secret",
+        "required": true,
+        "help": "区域服务密钥（mock 用 mock-secret-key-123）",
+        "inject": { "where": "header", "name": "Authorization", "prefix": "Bearer " }
+      },
+      {
+        "key": "region",
+        "label": "区域",
+        "type": "select",
+        "required": true,
+        "options": ["cn", "us"],
+        "inject": { "where": "query", "name": "region" }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "get_region_forecast",
+      "description": "查询指定区域的天气（需携带区域凭证）",
+      "input_schema": {
+        "type": "object",
+        "required": ["city"],
+        "properties": { "city": { "type": "string", "description": "城市名" } }
+      }
+    }
+  ],
+  "default_status": "active"
+}
