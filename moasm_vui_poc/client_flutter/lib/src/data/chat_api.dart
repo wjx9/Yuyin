@@ -1,7 +1,7 @@
 /// ChatApi：客户端唯一懂 HTTP 契约的地方（与 client_py/client.py、server/http_server.py 对称）。
 ///
 /// 契约（README §8.10）：
-///   GET  /health?platform=mobile -> { status, capabilities }
+///   GET  `/health?platform=mobile&user_id=<userId>` -> { status, capabilities }
 ///   POST /chat   { query, session_id, user_id?, location?, location_source?, platform } -> { text, intent, session_id }
 ///   鉴权(可选)    `Authorization: Bearer <token>`
 ///
@@ -51,7 +51,9 @@ class ChatApi {
       };
 
   Future<HealthInfo> health() async {
-    final json = await _send('GET', '/health?platform=$platform', null);
+    // 带 user_id：能力清单反映"该用户"装配（内置 + 商店选购的 MCP），而非纯内置（P3）。
+    final uid = Uri.encodeQueryComponent(userId);
+    final json = await _send('GET', '/health?platform=$platform&user_id=$uid', null);
     return HealthInfo.fromJson(json);
   }
 

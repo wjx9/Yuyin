@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/chat_api.dart';
@@ -19,10 +20,35 @@ import '../services/tts_service.dart';
 import '../services/location_service.dart';
 import '../services/calendar_service.dart';
 import '../services/reminder_service.dart';
+import '../navigation/navi_channel.dart';
+import '../navigation/navi_models.dart';
 import 'settings_controller.dart';
 
 /// 助手当前状态，驱动 UI（麦克风按钮形态、状态提示语）。
 enum AssistantStatus { idle, listening, thinking, speaking }
+
+/// 待开始的导航信息。
+class PendingNavigation {
+  final double lat;
+  final double lon;
+  final String poiName;
+  final String? poiId;
+
+  const PendingNavigation({
+    required this.lat,
+    required this.lon,
+    required this.poiName,
+    this.poiId,
+  });
+}
+
+/// 导航失败信息，用于弹出回退对话框。
+class NaviFailure {
+  final String reason;
+  final NavCommand command;
+
+  const NaviFailure({required this.reason, required this.command});
+}
 
 class ChatController extends ChangeNotifier {
   final SettingsController settings;
@@ -40,7 +66,31 @@ class ChatController extends ChangeNotifier {
   }) {
     _api = _buildApi();
     settings.addListener(_onSettingsChanged);
+    naviChannel.initialize();
+    // 监听导航事件：失败触发回退对话框；结束/到达自动清除悬浮面板
+    naviChannel.eventStream.listen((event) {
+      if (event.type == NaviEventType.routeCalcFailure ||
+          event.type == NaviEventType.error) {
+        final reason = event.data['message'] as String? ??
+            '错误码: ${event.data['errorCode'] ?? '未知'}';
+        // 保存最近一次导航命令用于回退
+        if (_lastNavCommand != null) {
+          naviFailure = NaviFailure(reason: reason, command: _lastNavCommand!);
+          notifyListeners();
+        }
+      } else if (event.type == NaviEventType.naviEnd ||
+          event.type == NaviEventType.arrivedDestination) {
+        // 导航结束（用户关闭面板或到达目的地）：自动隐藏悬浮面板
+        if (pendingNavigation != null) {
+          pendingNavigation = null;
+          notifyListeners();
+        }
+      }
+    });
   }
+
+  /// 最近一次导航命令（用于失败后回退）。
+  NavCommand? _lastNavCommand;
 
   Future<void> openCalendar() async {
     if (!await calendar.open()) {
@@ -57,13 +107,25 @@ class ChatController extends ChangeNotifier {
 
   late ChatApi _api;
 
+  /// 与 Android 原生通信的 Platform Channel，用于执行导航控制指令。
+  static const MethodChannel _navChannel = MethodChannel('com.rayneo.moasm_vui/navigation');
+
+  /// 导航管理器（高德导航 SDK 无 UI 模式）。
+  final NaviChannel naviChannel = NaviChannel();
+
+  /// 待开始的导航信息（非空时表示需要跳转到导航页面）。
+  PendingNavigation? pendingNavigation;
+
+  /// 导航失败信息（非空时表示需要弹出回退对话框）。
+  NaviFailure? naviFailure;
+
   bool get isBusy => status == AssistantStatus.thinking;
 
   ChatApi _buildApi() => ChatApi(
-        baseUrl: settings.config.serverUrl,
-        authToken: settings.config.authToken,
-        userId: settings.config.userId,
-      );
+    baseUrl: settings.config.serverUrl,
+    authToken: settings.config.authToken,
+    userId: settings.config.userId,
+  );
 
   void _onSettingsChanged() {
     // 服务端地址/鉴权可能变了，重建 api 并重新探活
@@ -97,12 +159,17 @@ class ChatController extends ChangeNotifier {
   Future<void> toggleListening() async {
     if (status == AssistantStatus.listening) {
       await speech.stop();
+      // 停止听写后助手空闲，恢复导航语音
+      await _setAssistantActive(false);
       return;
     }
     if (status == AssistantStatus.thinking) return; // 正在等服务端，先不抢麦
 
     await tts.stop(); // 说话前先把上一条朗读停掉
-    final ok = await speech.init(onStatus: _onSpeechStatus, onError: _onSpeechError);
+    final ok = await speech.init(
+      onStatus: _onSpeechStatus,
+      onError: _onSpeechError,
+    );
     if (!ok) {
       _pushSystem('语音识别不可用：请检查麦克风权限，或改用下方文字输入。', isError: true);
       return;
@@ -110,24 +177,50 @@ class ChatController extends ChangeNotifier {
     partialText = '';
     status = AssistantStatus.listening;
     notifyListeners();
+    // 助手开始听写：通知原生导航页让导航语音让位
+    await _setAssistantActive(true);
     await speech.listen(onResult: _onSpeechResult);
+  }
+
+  /// push-to-talk「按下说话」：确保进入听写（已在听则忽略）。
+  Future<void> startListening() async {
+    if (status == AssistantStatus.listening || status == AssistantStatus.thinking) {
+      return;
+    }
+    await toggleListening();
+  }
+
+  /// push-to-talk「松手结束」：停止听写并定稿（触发识别结果发送）。
+  Future<void> stopListening() async {
+    if (status == AssistantStatus.listening) {
+      await toggleListening(); // 停止听写，触发 final → sendText
+    }
   }
 
   void _onSpeechResult(String text, bool isFinal) {
     partialText = text;
     notifyListeners();
-    if (isFinal && text.trim().isNotEmpty) {
-      final query = text.trim();
-      partialText = '';
-      sendText(query);
+    // 导航页实时显示识别文字（无导航页时为 no-op）
+    _syncNaviSpeechText(text);
+    if (isFinal) {
+      // 输入完成：清空导航页显示
+      _syncNaviSpeechText('');
+      if (text.trim().isNotEmpty) {
+        final query = text.trim();
+        partialText = '';
+        sendText(query);
+      }
     }
   }
 
   void _onSpeechStatus(String s) {
     // 底层听写结束（done/notListening）时，若还停在 listening 态则复位
-    if ((s == 'done' || s == 'notListening') && status == AssistantStatus.listening) {
+    if ((s == 'done' || s == 'notListening') &&
+        status == AssistantStatus.listening) {
       status = AssistantStatus.idle;
       notifyListeners();
+      _setAssistantActive(false);
+      _syncNaviSpeechText('');
     }
   }
 
@@ -136,6 +229,8 @@ class ChatController extends ChangeNotifier {
       status = AssistantStatus.idle;
       partialText = '';
       notifyListeners();
+      _setAssistantActive(false);
+      _syncNaviSpeechText('');
     }
   }
 
@@ -145,26 +240,42 @@ class ChatController extends ChangeNotifier {
     final q = query.trim();
     if (q.isEmpty || status == AssistantStatus.thinking) return;
 
+    // 助手开始处理：导航途中让导航语音让位（文本输入路径也需要）
+    await _setAssistantActive(true);
+
     messages.add(ChatTurn(sender: Sender.user, text: q));
-    messages.add(const ChatTurn(sender: Sender.assistant, text: '思考中…', pending: true));
+    messages.add(
+      const ChatTurn(sender: Sender.assistant, text: '思考中…', pending: true),
+    );
     status = AssistantStatus.thinking;
     notifyListeners();
 
     final pendingIndex = messages.length - 1;
     try {
-      String? currentLocation;
+      String? selectedLocation;
+      String locationSource = 'none';
       try {
-        currentLocation = await location.currentLocation();
-      } catch (_) {
-        // 定位不可用时继续使用设置页中的固定坐标，不阻塞普通聊天。
-        currentLocation = null;
+        final gpsLocation = await location.currentLocation();
+        if (gpsLocation != null && gpsLocation.trim().isNotEmpty) {
+          selectedLocation = gpsLocation.trim();
+          locationSource = 'mobile_gps';
+        }
+      } catch (error) {
+        // GPS 读取失败时继续尝试设置页的固定坐标，不阻塞普通聊天。
+        debugPrint('GPS unavailable, fallback to configured location: $error');
       }
-
-      final locationSource = currentLocation == null ? 'configured_location' : 'mobile_gps';
+      if (selectedLocation == null) {
+        final configuredLocation = settings.config.location?.trim();
+        if (configuredLocation != null && configuredLocation.isNotEmpty) {
+          selectedLocation = configuredLocation;
+          locationSource = 'configured_location';
+          debugPrint('Using configured location: $selectedLocation');
+        }
+      }
       final reply = await _api.chat(
         query: q,
         sessionId: settings.config.sessionId,
-        location: currentLocation ?? settings.config.location,
+        location: selectedLocation,
         locationSource: locationSource,
       );
       messages[pendingIndex] = ChatTurn(
@@ -207,6 +318,11 @@ class ChatController extends ChangeNotifier {
         }
       }
 
+      // 导航控制指令：服务端下发 nav_command，调用 Android 原生执行真正导航。
+      if (reply.navCommand != null) {
+        unawaited(_executeNavCommand(reply.navCommand!));
+      }
+
       await tts.speak(reply.text); // awaitSpeakCompletion=true，播完才返回
     } on ApiException catch (e) {
       messages[pendingIndex] = ChatTurn(
@@ -217,6 +333,8 @@ class ChatController extends ChangeNotifier {
     } finally {
       status = AssistantStatus.idle;
       notifyListeners();
+      // 整轮结束：助手回到空闲，恢复导航语音
+      _setAssistantActive(false);
     }
   }
 
@@ -225,12 +343,141 @@ class ChatController extends ChangeNotifier {
     for (final url in [music.deeplink, music.webUrl]) {
       if (url.isEmpty) continue;
       try {
-        if (await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)) return;
+        if (await launchUrl(
+          Uri.parse(url),
+          mode: LaunchMode.externalApplication,
+        )) {
+          return;
+        }
       } catch (_) {
         // 换下一个 url 兜底
       }
     }
     _pushSystem('没能拉起网易云音乐，请确认已安装该 app（或稍后重试）。', isError: true);
+  }
+
+  /// 执行导航控制指令：通过 Platform Channel 调用 Android 原生。
+  ///
+  /// cmd=4（设置终点/开始导航）：使用高德导航 SDK 无 UI 模式，跳转到自定义导航页面
+  /// cmd=2（停止导航）：停止当前导航
+  /// 其他指令：透传 amap_execute_json 给 AmapLinkClient（需集成 SDK）
+  Future<void> _executeNavCommand(NavCommand cmd) async {
+    debugPrint(
+      'NavCommand received: cmd=${cmd.cmd} (${cmd.cmdName}), '
+      'poi=${cmd.poiName}, lon=${cmd.lon}, lat=${cmd.lat}',
+    );
+
+    // cmd=4（开始导航）：使用高德导航 SDK 无 UI 模式，跳转到自定义导航页面
+    if (cmd.cmd == 4 && cmd.lon != null && cmd.lat != null) {
+      _lastNavCommand = cmd;
+      final poiName = cmd.poiName ?? '目的地';
+      final poiId = cmd.poiId;
+
+      // 设置待导航信息，UI 层监听后跳转到导航页面
+      pendingNavigation = PendingNavigation(
+        lat: cmd.lat!,
+        lon: cmd.lon!,
+        poiName: poiName,
+        poiId: poiId,
+      );
+      notifyListeners();
+
+      // 调用高德导航 SDK 开始导航
+      try {
+        final result = await naviChannel.startNavigation(
+          lat: cmd.lat!,
+          lon: cmd.lon!,
+          poiName: poiName,
+          poiId: poiId,
+        );
+        debugPrint('导航启动结果: $result');
+        if (result.startsWith('error:')) {
+          _pushSystem('导航启动失败：${result.substring(6)}', isError: true);
+        }
+      } catch (e) {
+        debugPrint('导航启动失败: $e');
+        _pushSystem('导航启动失败：$e', isError: true);
+      }
+      return;
+    }
+
+    // cmd=2（停止导航）：停止导航
+    if (cmd.cmd == 2) {
+      await naviChannel.stopNavigation();
+      pendingNavigation = null;
+      notifyListeners();
+      return;
+    }
+
+    // 其他指令：回退到旧的 executeNavCommand 方式
+    await _executeNavCommandLegacy(cmd);
+  }
+
+  /// 用户选择回退到 Intent 方式（打开高德地图 App）。
+  Future<void> fallbackToIntent() async {
+    final cmd = naviFailure?.command;
+    naviFailure = null;
+    notifyListeners();
+    if (cmd != null) {
+      await _executeNavCommandLegacy(cmd);
+    }
+  }
+
+  /// 用户取消回退。
+  void cancelFallback() {
+    naviFailure = null;
+    notifyListeners();
+  }
+
+  /// 用户主动关闭悬浮导航面板：清除待导航信息，停止导航。
+  /// PlatformView.dispose() 会推送 navi_end 事件，这里先清状态避免面板闪烁。
+  Future<void> clearPendingNavigation() async {
+    if (pendingNavigation == null) return;
+    pendingNavigation = null;
+    notifyListeners();
+    await naviChannel.stopNavigation();
+  }
+
+  /// 旧版导航指令执行（Intent 方式，兼容）。
+  Future<void> _executeNavCommandLegacy(NavCommand cmd) async {
+    try {
+      final result = await _navChannel.invokeMethod<String>('executeNavCommand', {
+        'cmd': cmd.cmd,
+        'requestId': cmd.requestId,
+        'data': cmd.data,
+        'amapExecuteJson': cmd.amapExecuteJson,
+      });
+      debugPrint('NavCommand result: $result');
+    } on PlatformException catch (e) {
+      debugPrint('NavCommand failed: ${e.code} - ${e.message}');
+      _pushSystem(
+        '导航执行失败：${e.message ?? e.code}。请确认手机已安装高德地图 App。',
+        isError: true,
+      );
+    } on MissingPluginException {
+      debugPrint('NavChannel not implemented on this platform');
+    } catch (e) {
+      debugPrint('NavCommand unexpected error: $e');
+    }
+  }
+
+  /// 通知原生导航页：语音助手激活/空闲。激活时让导航语音让位，
+  /// 避免与助手的听写/播报冲突；空闲时恢复导航语音。
+  Future<void> _setAssistantActive(bool active) async {
+    try {
+      await _navChannel.invokeMethod('setAssistantActive', active);
+    } catch (e) {
+      debugPrint('setAssistantActive failed: $e');
+    }
+  }
+
+  /// 把听写的实时文字同步给导航页显示（无导航页时为 no-op）。
+  Future<void> _syncNaviSpeechText(String text) async {
+    try {
+      await _navChannel.invokeMethod('naviSpeechText', text);
+    } catch (e) {
+      debugPrint('naviSpeechText failed: $e');
+    }
   }
 
   /// 用户主动打断当前朗读。

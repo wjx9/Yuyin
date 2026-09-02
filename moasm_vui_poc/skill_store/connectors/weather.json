@@ -1,0 +1,27 @@
+{
+  "skill_id": "weather-mcp",
+  "name": "天气查询（MCP）",
+  "icon": "🌤",
+  "description": "查询指定城市未来几天的天气情况",
+  "intent": "weather_mcp",
+  "pc_only": false,
+  "entry_tool": "get_weather",
+  "query_slot": "city",
+  "keywords": ["天气", "气温", "天气怎么样", "几度"],
+  "mcp_server": { "transport": "http", "url": "http://127.0.0.1:9100/mcp" },
+  "credentials": { "type": "none" },
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "查询城市天气",
+      "input_schema": {
+        "required": ["city"],
+        "properties": {
+          "city": { "type": "string", "description": "城市名，如 深圳" },
+          "days": { "type": "integer", "description": "未来几天，默认 1" }
+        }
+      }
+    }
+  ],
+  "default_status": "active"
+}

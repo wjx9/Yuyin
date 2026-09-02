@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../state/settings_controller.dart';
@@ -13,31 +14,39 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _server;
+  late final TextEditingController _store;
   late final TextEditingController _token;
   late final TextEditingController _location;
+  late final TextEditingController _userId;
 
   @override
   void initState() {
     super.initState();
     final cfg = context.read<SettingsController>().config;
     _server = TextEditingController(text: cfg.serverUrl);
+    _store = TextEditingController(text: cfg.storeUrl ?? '');
     _token = TextEditingController(text: cfg.authToken ?? '');
     _location = TextEditingController(text: cfg.location ?? '');
+    _userId = TextEditingController(text: cfg.userId);
   }
 
   @override
   void dispose() {
     _server.dispose();
+    _store.dispose();
     _token.dispose();
     _location.dispose();
+    _userId.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     await context.read<SettingsController>().update(
           serverUrl: _server.text.trim(),
+          storeUrl: _store.text.trim(), // 空串 = 清空 → 自动跟随服务端同 host :9000
           authToken: _token.text.trim(),
           location: _location.text.trim(),
+          userId: _userId.text.trim(),
         );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已保存')));
@@ -66,6 +75,18 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 16),
           TextField(
+            controller: _store,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: '商店地址（可选）',
+              hintText: 'http://192.168.x.x:9000',
+              helperText: '留空 = 自动跟随服务端同 host 的 :9000；改服务端地址后商店自动跟随',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
             controller: _token,
             autocorrect: false,
             decoration: const InputDecoration(
@@ -82,6 +103,17 @@ class _SettingsPageState extends State<SettingsPage> {
               labelText: '位置坐标（可选）',
               hintText: '经度,纬度，如 113.92,22.53',
               helperText: '供高德等基于位置的能力使用',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _userId,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: '用户 ID',
+              hintText: 'demo',
+              helperText: '技能按用户装配：与网页 http://<PC>:9000 顶部"当前用户"保持一致',
               border: OutlineInputBorder(),
             ),
           ),
@@ -108,6 +140,21 @@ class _SettingsPageState extends State<SettingsPage> {
               icon: const Icon(Icons.refresh),
               label: const Text('新建'),
             ),
+          ),
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 8),
+          // 高德 Agent SDK POC 验证入口
+          ListTile(
+            leading: const Icon(Icons.science_outlined),
+            title: const Text('高德 Agent SDK POC 验证'),
+            subtitle: const Text('验证 AMAP_SDK 模式、非导航意图、多轮对话'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              // 通过 MethodChannel 启动原生 Activity
+              const channelName = 'com.rayneo.moasm_vui/agent_poc';
+              MethodChannel(channelName).invokeMethod('startAgentPoc');
+            },
           ),
         ],
       ),

@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>技能商店 · 管理员</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 17px; margin: 26px 0 8px; }
+  h3 { font-size: 14px; margin: 18px 0 6px; color: #555; }
+  button { border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+  .off-btn { background: #2ecc71; color: #fff; }
+  .del { background: #fff; color: #c0392b; border: 1px solid #c0392b; }
+  .hint { color: #999; font-size: 12px; margin-top: 24px; }
+  .scope { color: #666; font-size: 13px; background: #fafafa; border: 1px solid #eee;
+           border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+  .row { margin: 8px 0; }
+  .row input, .row select { width: 100%; box-sizing: border-box; padding: 7px 9px; font-size: 14px;
+          border: 1px solid #ccc; border-radius: 6px; }
+  .row label { display: block; font-size: 13px; color: #666; margin-bottom: 3px; }
+  .probe-row { display: flex; gap: 8px; }
+  .probe-row input { flex: 1; }
+  .warn { color: #c0392b; font-size: 12px; min-height: 16px; }
+  .ok { color: #27ae60; }
+  #probeResult { font-size: 13px; margin-top: 8px; min-height: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border: 1px solid #eee; padding: 6px 8px; text-align: left; }
+  th { background: #fafafa; font-weight: 600; }
+  form#publishForm { display: none; background: #fafafa; border: 1px solid #eee; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  textarea { width: 100%; box-sizing: border-box; padding: 7px 9px; font-size: 13px;
+             font-family: ui-monospace, monospace; border: 1px solid #ccc; border-radius: 6px; min-height: 64px; }
+  .field-help { color: #999; font-size: 12px; margin-top: 3px; }
+  .section-head { display: flex; align-items: baseline; gap: 10px; }
+  .section-head button { padding: 4px 10px; font-size: 12px; background: #fff; border: 1px solid #ccc; color: #444; }
+  .empty { color: #999; font-size: 13px; padding: 8px 0; }
+  details > summary { font-size: 13px; color: #666; cursor: pointer; padding: 8px 0; }
+  details[open] > summary { color: #444; }
+</style>
+<h1>技能商店 · 管理员控制台</h1>
+
+<div class="scope">这里统一管理助手可调用的<b>技能</b>。用户的选购、启用/停用、凭证配置在
+<b>手机端技能商店</b>操作；技能由不同接入方式实现，但在使用层面没有区别。</div>
+
+<div class="section-head">
+  <h2>技能目录</h2>
+  <button onclick="syncCatalog()">重新同步目录</button>
+  <span id="catalogSyncStatus" style="font-size:12px;color:#999"></span>
+</div>
+<div id="catalogTable"><div class="empty">加载中…</div></div>
+
+<details>
+  <summary>高级：添加远程技能（probe 发现 → 手动组装 manifest）</summary>
+  <div style="margin-top:10px">
+    <div class="probe-row">
+      <input id="mcpUrl" placeholder="MCP server 地址，如 https://mcp.mcd.cn">
+      <button class="off-btn" onclick="probe()">发现工具</button>
+    </div>
+    <div class="probe-row" style="margin-top:6px">
+      <input id="probeToken" placeholder="临时 Token（需鉴权 MCP 填，如麦当劳；仅本次发现用，不保存）">
+    </div>
+    <details style="margin-top:6px">
+      <summary>高级：请求头 JSON（可选；X-API-Key 等非 Bearer 鉴权用，会叠加到上面的 Token 之上）</summary>
+      <textarea id="probeHeadersJson" placeholder='{"X-API-Key":"sk-xxx","X-Tenant":"cn"}'></textarea>
+    </details>
+    <div id="probeResult"></div>
+
+    <form id="publishForm" onsubmit="return false">
+      <div class="row"><label>技能 ID（唯一，如 translate-mcp）</label><input id="skillId"></div>
+      <div class="row"><label>入口工具 entry_tool（发现到的工具）</label><select id="entryTool"></select></div>
+      <div class="row"><label>名称（如 文本翻译（MCP））</label><input id="skillName"></div>
+      <div class="row"><label>图标（emoji，如 🌐）</label><input id="skillIcon"></div>
+      <div class="row"><label>描述（给语音助手看，决定何时用它）</label><input id="skillDesc"></div>
+      <div class="row">
+        <label>intent（唯一 id，如 translate_mcp；不能撞内置能力）</label>
+        <input id="skillIntent">
+        <div class="warn" id="intentHint"></div>
+      </div>
+      <div class="row"><label>关键词（逗号分隔，命中即确定性路由到本技能，如 翻译, 翻译成）</label><input id="keywords"></div>
+      <div class="row"><label>顶替内置 intent（逗号分隔，可选；买了本技能后内置让位，如 amap_weather_live）</label><input id="replaces"></div>
+      <div class="row"><label>query_slot（可选；槽位缺失时整句 query 喂给哪个参数）</label><input id="querySlot"></div>
+      <div class="row"><label>credentials（JSON，声明本技能要用户填哪些凭证；默认 {"type":"none"}）</label>
+        <textarea id="credentialsJson">{"type":"none"}</textarea>
+        <div class="field-help">byok 示例：{"type":"byok","schema":[{"key":"api_key","label":"API Key","type":"secret","required":true,"inject":{"where":"header","name":"X-API-Key","prefix":"Bearer "}}]}</div>
+      </div>
+      <button class="off-btn" onclick="publishSkill()">新增（发布）</button>
+    </form>
+  </div>
+</details>
+
+<script>
+const API_PREFIX = location.pathname.startsWith('/skill-store') ? '/skill-store' : '';
+const BUILTIN = ['chitchat','calendar_create','alarm_create','timer_create','reminder_create',
+  'amap','amap_geocode','amap_regeo','amap_weather_live','amap_weather_forecast','amap_driving',
+  'amap_walking','amap_bicycling','amap_transit','exa_search','tencent_hot_news',
+  'tencent_news_search','tripnow_public','tripnow_personal','express_tracking',
+  'music_play','music_control'];
+let probedTools = [];
+let lastAuto = {}; // 记录上次自动带出的值：被手动改过的字段不再覆盖
+
+async function probe() {
+  const url = document.getElementById('mcpUrl').value.trim();
+  const out = document.getElementById('probeResult');
+  out.className = '';
+  if (!url) { out.textContent = '请先填 MCP server 地址'; return; }
+  out.textContent = '正在发现工具…';
+  const token = document.getElementById('probeToken').value.trim();
+  const probe_headers = token ? { Authorization: 'Bearer ' + token } : {};
+  // 高级请求头 JSON：非 Bearer 鉴权（X-API-Key 等）用，叠加在 Bearer 之上，键冲突以高级框为准
+  const raw = document.getElementById('probeHeadersJson').value.trim();
+  if (raw) {
+    try {
+      const extra = JSON.parse(raw);
+      if (typeof extra !== 'object' || extra === null || Array.isArray(extra)) {
+        throw new Error('必须是 JSON 对象 {header名: 值}');
+      }
+      for (const k of Object.keys(extra)) {
+        if (typeof extra[k] !== 'string') throw new Error('请求头值必须是字符串：' + k);
+      }
+      Object.assign(probe_headers, extra);
+    } catch (e) {
+      out.className = 'warn';
+      out.textContent = '❌ 高级请求头 JSON 无效：' + e.message;
+      return;
+    }
+  }
+  try {
+    const res = await fetch(API_PREFIX + '/skills/probe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mcp_server: url, probe_headers }),
+    }).then(r => r.json());
+    if (!res.ok) { out.className = 'warn'; out.textContent = '❌ ' + (res.error || '连接失败'); return; }
+    probedTools = res.tools;
+    out.className = 'ok';
+    out.textContent = '✅ 发现 ' + res.tools.length + ' 个工具：' + res.tools.map(t => t.name).join('、');
+    const sel = document.getElementById('entryTool');
+    sel.innerHTML = res.tools.map(t =>
+      `<option value="${t.name}">${t.name} — ${(t.description || '').slice(0, 40)}</option>`).join('');
+    document.getElementById('publishForm').style.display = 'block';
+    autofillFor(probedTools.find(t => t.name === sel.value) || probedTools[0]);
+  } catch (e) {
+    out.className = 'warn'; out.textContent = '❌ 请求失败：' + e.message;
+  }
+}
+
+// 按当前选中的 entry_tool 自动带出 skillId/名称/描述；手动改过的字段不覆盖。
+function autofillFor(tool) {
+  if (!tool) return;
+  const id = document.getElementById('skillId'), nm = document.getElementById('skillName'), ds = document.getElementById('skillDesc');
+  if (!lastAuto.id || id.value === lastAuto.id) id.value = tool.name + '-mcp';
+  if (!lastAuto.nm || nm.value === lastAuto.nm) nm.value = tool.name + '（MCP）';
+  if (!lastAuto.ds || ds.value === lastAuto.ds) ds.value = tool.description || '';
+  lastAuto = { id: id.value, nm: nm.value, ds: ds.value };
+}
+
+function buildManifest() {
+  const name = document.getElementById('entryTool').value;
+  const t = probedTools.find(x => x.name === name);
+  const probeOut = document.getElementById('probeResult');
+  let credentials;
+  const raw = document.getElementById('credentialsJson').value.trim() || '{"type":"none"}';
+  try {
+    credentials = JSON.parse(raw);
+  } catch (e) {
+    probeOut.className = 'warn';
+    probeOut.textContent = '❌ credentials 不是合法 JSON：' + e.message;
+    return null;
+  }
+  return {
+    skill_id: document.getElementById('skillId').value.trim(),
+    name: document.getElementById('skillName').value.trim(),
+    icon: document.getElementById('skillIcon').value.trim(),
+    description: document.getElementById('skillDesc').value.trim(),
+    intent: document.getElementById('skillIntent').value.trim(),
+    entry_tool: t.name,
+    query_slot: document.getElementById('querySlot').value.trim() || null,
+    keywords: document.getElementById('keywords').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+    replaces: document.getElementById('replaces').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+    mcp_server: { transport: 'http', url: document.getElementById('mcpUrl').value.trim() },
+    credentials: credentials,
+    pc_only: false,
+    tools: [{ name: t.name, description: t.description, input_schema: t.input_schema }],
+  };
+}
+
+async function publishSkill() {
+  const out = document.getElementById('probeResult');
+  out.className = '';
+  const manifest = buildManifest();
+  if (!manifest) return;
+  if (!manifest.skill_id || !manifest.intent || !manifest.entry_tool) {
+    out.className = 'warn'; out.textContent = '技能 ID / intent / entry_tool 必填'; return;
+  }
+  const res = await fetch(API_PREFIX + '/skills', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ manifest }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { out.className = 'warn'; out.textContent = '❌ 发布失败：' + (d.detail || res.status); return; }
+  out.className = 'ok';
+  out.textContent = '✅ 已发布 ' + d.skill_id + '（status=' + d.status + '）';
+  loadAdmin();
+}
+
+async function setStatus(skill_id, status) {
+  await fetch(API_PREFIX + '/skills/' + skill_id + '/status', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  loadAdmin();
+}
+
+async function delSkill(skill_id) {
+  if (!confirm('确认删除技能 ' + skill_id + '？（会从所有用户选购里移除）')) return;
+  await fetch(API_PREFIX + '/skills/' + skill_id, { method: 'DELETE' });
+  loadAdmin();
+}
+
+// 重新同步统一技能目录（connectors/*.json 或内置能力变更后免重启）
+async function syncCatalog() {
+  const status = document.getElementById('catalogSyncStatus');
+  status.textContent = '同步中…';
+  try {
+  const res = await fetch(API_PREFIX + '/skills/sync-all', { method: 'POST' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { status.textContent = '❌ ' + (d.detail || res.status); return; }
+    status.textContent = '✅ 已同步 ' + (d.synced || []).length + ' 个（bumped ' + (d.bumped || 0) + '）';
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+  }
+  loadAdmin();
+}
+
+// 所有技能统一显示；publisher/kind 只用于后端执行和安全控制，不展示为产品分类。
+function renderSkillTable(containerId, skills) {
+  const el = document.getElementById(containerId);
+  if (!skills.length) { el.innerHTML = '<div class="empty">（空）</div>'; return; }
+  el.innerHTML =
+    '<table><tr><th>ID</th><th>名称</th><th>intent</th><th>状态</th><th>操作</th></tr>' +
+    skills.map(s => `
+      <tr>
+        <td>${s.skill_id}</td>
+        <td>${s.icon || ''} ${s.name}</td>
+        <td>${s.intent}</td>
+        <td>${s.status === 'active' ? '🟢 已上架' : '⚪ 已下架'}</td>
+        <td>
+          ${`<button class="off-btn" style="padding:4px 8px;font-size:12px"
+                  onclick="setStatus('${s.skill_id}', '${s.status === 'active' ? 'inactive' : 'active'}')">
+            ${s.status === 'active' ? '下架' : '上架'}
+          </button>
+          ${s.publisher === 'builtin' || s.publisher === 'catalog' ? '' : `<button class="del" style="padding:4px 8px;font-size:12px"
+                  onclick="delSkill('${s.skill_id}')">删除</button>`}
+          `}
+        </td>
+      </tr>`).join('') + '</table>';
+}
+
+async function loadAdmin() {
+  const res = await fetch(API_PREFIX + '/skills/admin').then(r => r.json());
+  renderSkillTable('catalogTable', res.skills);
+}
+
+document.getElementById('skillIntent').addEventListener('input', e => {
+  const hint = document.getElementById('intentHint');
+  hint.textContent = BUILTIN.includes(e.target.value.trim())
+    ? '⚠️ 撞内置能力，不能作为 MCP 技能 intent' : '';
+});
+
+document.getElementById('entryTool').addEventListener('change', e => {
+  const t = probedTools.find(x => x.name === e.target.value);
+  if (t) autofillFor(t);
+});
+
+// credentials 是默认示例值且用户点进来了 → 清空，避免粘贴时拼成两个 JSON（{"type":"none"}{...}）
+const credInput = document.getElementById('credentialsJson');
+credInput.addEventListener('focus', () => {
+  if (credInput.value.trim() === '{"type":"none"}') credInput.value = '';
+});
+
+loadAdmin();
+</script>

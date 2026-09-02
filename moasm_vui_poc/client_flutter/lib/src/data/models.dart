@@ -114,6 +114,86 @@ class ScheduleAction {
   }
 }
 
+/// 导航控制指令：服务端下发，手机端通过 Platform Channel 调用 Android 原生执行。
+///
+/// 对应高德 AmapLinkClient 的 execute() 协议：
+///   cmd=4 设置/变更终点（开始导航）
+///   cmd=2 停止导航
+///   cmd=1 切换路线
+///
+/// 服务端 data.nav_command 形如：
+///   {"cmd":4,"requestId":1788233461020,
+///    "data":{"name":"大新地铁站","lon":113.915,"lat":22.532,"poiid":"BV10249973"},
+///    "amap_execute_json":"{...}"}
+class NavCommand {
+  final int cmd;
+  final int requestId;
+  final Map<String, dynamic> data;
+  final String? description;
+  final String? amapExecuteJson;
+
+  const NavCommand({
+    required this.cmd,
+    required this.requestId,
+    required this.data,
+    this.description,
+    this.amapExecuteJson,
+  });
+
+  /// 指令名称，用于日志和调试。
+  String get cmdName {
+    switch (cmd) {
+      case 1:
+        return '切换路线';
+      case 2:
+        return '停止导航';
+      case 3:
+        return '添加途经点';
+      case 4:
+        return '设置终点/开始导航';
+      case 5:
+        return '查询导航信息';
+      case 6:
+        return '切换播报方式';
+      case 7:
+        return '刷新导航信息';
+      default:
+        return '未知指令($cmd)';
+    }
+  }
+
+  /// 终点名称（cmd=4 时有值）。
+  String? get poiName => data['name'] is String ? data['name'] as String : null;
+
+  /// 终点经度（cmd=4 时有值）。
+  double? get lon => (data['lon'] as num?)?.toDouble();
+
+  /// 终点纬度（cmd=4 时有值）。
+  double? get lat => (data['lat'] as num?)?.toDouble();
+
+  /// 高德 POI ID（cmd=4 时有值）。
+  String? get poiId => data['poiid'] is String ? data['poiid'] as String : null;
+
+  /// 从 /chat 响应的 data 段解析；无 nav_command 则返回 null。
+  static NavCommand? tryFrom(Object? data) {
+    if (data is! Map) return null;
+    final navCmd = data['nav_command'];
+    if (navCmd is! Map) return null;
+    final cmd = navCmd['cmd'];
+    final requestId = navCmd['requestId'];
+    if (cmd is! int || requestId is! int) return null;
+    final cmdData = navCmd['data'];
+    return NavCommand(
+      cmd: cmd,
+      requestId: requestId,
+      data: cmdData is Map ? Map<String, dynamic>.from(cmdData) : {},
+      description: navCmd['description'] is String ? navCmd['description'] as String : null,
+      amapExecuteJson:
+          navCmd['amap_execute_json'] is String ? navCmd['amap_execute_json'] as String : null,
+    );
+  }
+}
+
 /// UI 层一条消息（聊天气泡）。assistant 在等服务端时先放一条 pending 占位。
 class ChatTurn {
   final Sender sender;
@@ -168,6 +248,7 @@ class ChatReply {
   final MusicInfo? music;
   final CalendarEvent? calendarEvent;
   final ScheduleAction? scheduleAction;
+  final NavCommand? navCommand;
   final List<Map<String, dynamic>>? a2ui;
 
   const ChatReply({
@@ -177,6 +258,7 @@ class ChatReply {
     this.music,
     this.calendarEvent,
     this.scheduleAction,
+    this.navCommand,
     this.a2ui,
   });
 
@@ -188,6 +270,7 @@ class ChatReply {
       music: MusicInfo.tryFrom(json['data']),
       calendarEvent: CalendarEvent.tryFrom(json['data']),
       scheduleAction: ScheduleAction.tryFrom(json['data']),
+      navCommand: NavCommand.tryFrom(json['data']),
       a2ui: _a2uiFrom(json['a2ui']),
     );
   }

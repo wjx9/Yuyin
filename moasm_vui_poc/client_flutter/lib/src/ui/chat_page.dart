@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 
 import '../state/chat_controller.dart';
 import '../workbuddy_debug/workbuddy_debug_page.dart';
+import 'navi_floating_panel.dart';
 import 'settings_page.dart';
+import 'skill_store_page.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/mic_button.dart';
 
@@ -20,12 +22,48 @@ class _ChatPageState extends State<ChatPage> {
   final _scroll = ScrollController();
   final _input = TextEditingController();
   int _lastCount = 0;
+  NaviFailure? _lastNaviFailure;
 
   @override
   void dispose() {
     _scroll.dispose();
     _input.dispose();
     super.dispose();
+  }
+
+  /// 检查是否有导航失败，有则弹出回退对话框。
+  void _checkNaviFailure(ChatController c) {
+    final failure = c.naviFailure;
+    if (failure != null && failure != _lastNaviFailure) {
+      _lastNaviFailure = failure;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('导航启动失败'),
+            content: Text('内置导航启动失败：${failure.reason}\n\n是否改用高德地图 App 导航？'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  c.cancelFallback();
+                },
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  c.fallbackToIntent();
+                },
+                child: const Text('用高德地图打开'),
+              ),
+            ],
+          ),
+        );
+      });
+    }
   }
 
   void _autoScroll() {
@@ -54,6 +92,8 @@ class _ChatPageState extends State<ChatPage> {
       _lastCount = c.messages.length;
       _autoScroll();
     }
+    // 检查是否有导航失败
+    _checkNaviFailure(c);
 
     return Scaffold(
       appBar: AppBar(
@@ -69,6 +109,7 @@ class _ChatPageState extends State<ChatPage> {
             IconButton(
               tooltip: 'WorkBuddy 调试台',
               icon: const Icon(Icons.account_tree_outlined),
+              visualDensity: VisualDensity.compact,
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const WorkBuddyDebugPage()),
               ),
@@ -76,45 +117,76 @@ class _ChatPageState extends State<ChatPage> {
           IconButton(
             tooltip: '已启用能力',
             icon: const Icon(Icons.auto_awesome),
+            visualDensity: VisualDensity.compact,
             onPressed: () => _showCapabilities(context, c),
+          ),
+          IconButton(
+            tooltip: '技能商店',
+            icon: const Icon(Icons.storefront_outlined),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SkillStorePage(
+                  // 选购成功后尽力同步能力清单（TTL ≤30s 内仍是旧清单，页面 hint 覆盖预期）
+                  onSkillsSaved: () => context.read<ChatController>().refreshHealth(),
+                ),
+              ),
+            ),
           ),
           IconButton(
             tooltip: '清空对话',
             icon: const Icon(Icons.delete_outline),
+            visualDensity: VisualDensity.compact,
             onPressed: c.messages.isEmpty ? null : c.clear,
           ),
           IconButton(
             tooltip: '打开日历',
             icon: const Icon(Icons.calendar_month_outlined),
+            visualDensity: VisualDensity.compact,
             onPressed: c.openCalendar,
           ),
           IconButton(
             tooltip: '设置',
             icon: const Icon(Icons.settings),
+            visualDensity: VisualDensity.compact,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SettingsPage()),
             ),
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          if (c.connectionError != null) _errorBanner(context, c),
-          Expanded(
-            child: c.messages.isEmpty
-                ? _emptyHint(context)
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    itemCount: c.messages.length,
-                    itemBuilder: (_, i) => MessageBubble(
-                      turn: c.messages[i],
-                      onOpenMusic: c.openMusic,
-                    ),
-                  ),
+          // 底层：聊天页面（完全可交互）
+          Column(
+            children: [
+              if (c.connectionError != null) _errorBanner(context, c),
+              Expanded(
+                child: c.messages.isEmpty
+                    ? _emptyHint(context)
+                    : ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        itemCount: c.messages.length,
+                        itemBuilder: (_, i) => MessageBubble(
+                          turn: c.messages[i],
+                          onOpenMusic: c.openMusic,
+                        ),
+                      ),
+              ),
+              if (c.status == AssistantStatus.listening) _partialBar(context, c),
+              _inputBar(context, c),
+            ],
           ),
-          if (c.status == AssistantStatus.listening) _partialBar(context, c),
-          _inputBar(context, c),
+          // 悬浮导航面板（叠加在聊天界面之上，可拖拽/最小化/关闭）
+          if (c.pendingNavigation != null)
+            NaviFloatingPanel(
+              lat: c.pendingNavigation!.lat,
+              lon: c.pendingNavigation!.lon,
+              poiName: c.pendingNavigation!.poiName,
+              poiId: c.pendingNavigation!.poiId,
+              onClose: c.clearPendingNavigation,
+            ),
         ],
       ),
     );

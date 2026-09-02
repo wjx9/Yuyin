@@ -1,0 +1,53 @@
+{
+  "skill_id": "mcdonalds-mcp",
+  "name": "麦当劳门店查询",
+  "icon": "🍔",
+  "description": "查询麦当劳门店、菜单、优惠券、积分等",
+  "intent": "mcdonalds_order",
+  "pc_only": false,
+  "entry_tool": "query-nearby-stores",
+  "query_slot": "address",
+  "keywords": ["麦当劳", "金拱门", "麦乐送", "麦当劳门店", "附近麦当劳"],
+  "replaces": [],
+  "mcp_server": { "transport": "http", "url": "https://mcp.mcd.cn" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "mcp_token",
+        "label": "MCP Token",
+        "type": "secret",
+        "required": true,
+        "placeholder": "输入麦当劳 MCP Token",
+        "help": "在 https://open.mcd.cn/mcp 登录 → 控制台 → 激活 获取 Token",
+        "inject": { "where": "header", "name": "Authorization", "prefix": "Bearer " }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "query-nearby-stores",
+      "description": "Description: 到店场景下，查询用户可点餐门店，需要用户明确是到店自取还是车道取餐\n- beType=1(到店自提): 返回的门店无 beCode，后续工具调用不传 beCode\n- beType=5(得来速): 返回的门店有 beCode，后续工具调用必须传 beCode\nWhen：\n- 用户询问\"我想到店\", \"我想驾车去麦当劳\"\n- 看看我附近有哪些麦当劳的门店\nInput:\n- searchType: 必传，searchType=2 按位置进行搜索， searchType=1 搜索收藏餐厅，默认searchType=1\n- city: 城市，searchType=2 时必填\n- keyword: 位置关键词，searchType=2 时必填\n- beType: 必填，1-到店自取, 5-得来速车道取餐(Drive Through)\nOn Error：\n- 用户没有收藏记录，可使用搜索功能进行搜索\nNext：\n- 展示门店的 storeCode 和 beCode（beType=5 时）\n- reservation=true 时完整展示 reservationTimeOptions，today=true 标记\"(今天)\"\n- 引导用户选择门店",
+      "input_schema": {
+        "properties": {
+          "beType": {
+            "description": "beType必传，1：到店自提, 5-得来速车道取餐(Drive Through)",
+            "enum": [1, 5],
+            "type": "integer"
+          },
+          "city": { "description": "城市名", "type": "string" },
+          "keyword": { "description": "关键词", "type": "string" },
+          "searchType": {
+            "default": 1,
+            "description": "searchType=2 按位置进行搜索， searchType=1 搜索收藏餐厅，默认searchType=1",
+            "enum": [1, 2],
+            "type": "integer"
+          }
+        },
+        "required": ["beType", "searchType"],
+        "type": "object"
+      }
+    }
+  ],
+  "default_status": "inactive"
+}

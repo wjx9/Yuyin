@@ -1,0 +1,26 @@
+{
+  "skill_id": "stock-mcp",
+  "name": "股票行情（MCP）",
+  "icon": "📈",
+  "description": "查询指定股票（代码或公司名，如 600519 / 贵州茅台）的最新价格与涨跌幅",
+  "intent": "stock_mcp",
+  "pc_only": false,
+  "entry_tool": "get_stock",
+  "query_slot": "symbol",
+  "keywords": ["股价", "股票", "行情", "涨跌"],
+  "mcp_server": { "transport": "http", "url": "http://127.0.0.1:9100/mcp" },
+  "credentials": { "type": "none" },
+  "tools": [
+    {
+      "name": "get_stock",
+      "description": "查询指定股票代码或公司的最新行情",
+      "input_schema": {
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "description": "股票代码或公司名，如 600519 或 贵州茅台" }
+        }
+      }
+    }
+  ],
+  "default_status": "active"
+}

@@ -1,0 +1,44 @@
+{
+  "skill_id": "mcdonalds-mall-mcp",
+  "name": "麦当劳麦麦商城",
+  "icon": "🛍️",
+  "description": "查询麦麦商城内可使用积分兑换或现金购买的商品，包括商品券、实物商品、周边产品、礼品卡、派对活动等。支持按类目筛选。当用户询问麦麦商城有哪些可兑换或购买的商品时使用。",
+  "intent": "mcdonalds_mall",
+  "pc_only": false,
+  "entry_tool": "mall-points-products",
+  "query_slot": "catRuleIds",
+  "keywords": ["麦麦商城", "积分兑换", "商城商品", "麦当劳商城", "可兑换商品", "积分购买", "麦当劳积分商城", "麦麦商城商品", "积分兑换商品"],
+  "replaces": [],
+  "mcp_server": { "transport": "http", "url": "https://mcp.mcd.cn" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "mcp_token",
+        "label": "MCP Token",
+        "type": "secret",
+        "required": true,
+        "placeholder": "输入麦当劳 MCP Token",
+        "help": "在 https://open.mcd.cn/mcp 登录 → 控制台 → 激活 获取 Token（与麦当劳其他技能共用同一个 Token）",
+        "inject": { "where": "header", "name": "Authorization", "prefix": "Bearer " }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "mall-points-products",
+      "description": "查询麦麦商城内可使用积分兑换或现金购买的商品（不包括使用积分兑换的第三方兑换码）。When：\n- 用户询问麦麦商城有哪些可兑换或购买的商品\n- 用户想了解积分兑换商品列表\n- 用户想查看麦麦商城实物商品、周边产品、礼品卡等\nInput：\n- catRuleIds: 可选，按商品类目筛选，多个值用逗号分隔。类目规则：商品券(1>4)、实物商品(2)、周边产品(2>8)、实物礼品卡(2>9)、生日类派对(1>6>20)、主题类派对(1>6>21)、麦麦体验营(1>6>22)、品鉴会(1>6>25)、读书会(1>6>34)、积分兑换活动(1>6>40)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "catRuleIds": {
+            "type": "string",
+            "description": "按商品类目筛选，多个值用逗号分隔。例如：商品券和实物商品传入 1>4,2。不传则返回全部商品。"
+          }
+        },
+        "required": []
+      }
+    }
+  ],
+  "default_status": "inactive"
+}

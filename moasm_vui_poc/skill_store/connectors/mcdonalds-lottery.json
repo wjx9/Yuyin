@@ -1,0 +1,39 @@
+{
+  "skill_id": "mcdonalds-lottery-mcp",
+  "name": "麦当劳积分抽奖",
+  "icon": "🎰",
+  "description": "查询麦当劳积分抽奖活动信息，包括活动状态、奖品列表、抽奖消耗规则和用户可用积分/次数。适用于用户询问抽奖活动、剩余抽奖机会、积分是否足够等场景。",
+  "intent": "mcdonalds_lottery",
+  "pc_only": false,
+  "entry_tool": "query-lottery-info",
+  "query_slot": "query",
+  "keywords": ["麦当劳抽奖", "积分抽奖", "抽奖活动", "麦当劳活动", "麦当劳积分", "有什么抽奖", "能不能抽奖", "抽奖机会"],
+  "replaces": [],
+  "mcp_server": { "transport": "http", "url": "https://mcp.mcd.cn" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "mcp_token",
+        "label": "MCP Token",
+        "type": "secret",
+        "required": true,
+        "placeholder": "输入麦当劳 MCP Token",
+        "help": "在 https://open.mcd.cn/mcp 登录 → 控制台 → 激活 获取 Token（与麦当劳门店查询共用同一个 Token）",
+        "inject": { "where": "header", "name": "Authorization", "prefix": "Bearer " }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "query-lottery-info",
+      "description": "查询当前积分抽奖活动的基本信息，包括活动状态、奖品列表、抽奖消耗规则和用户可用资源。When：\n- 用户问\"有什么抽奖活动\"、\"我能不能抽奖\"、\"积分抽奖还有几次机会\"\n- 用户想了解积分抽奖活动详情、奖品列表、剩余次数、积分是否足够\nInput：无需入参",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ],
+  "default_status": "inactive"
+}

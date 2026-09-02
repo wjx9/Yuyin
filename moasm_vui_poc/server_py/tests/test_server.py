@@ -17,6 +17,12 @@ from server.schemas import BadRequest, ChatRequest, ChatResponse
 from server.service import ChatService
 from server.session import SessionStore
 
+from mcp_skill.client import McpToolClient, McpSkillError
+from mcp_skill.handler import MCPHandler
+from mcp_skill.manifest import SkillManifest
+from mcp_skill.provider import SkillCredentialProvider
+from store_client import StoreUnavailable
+
 
 class FakeDispatcher:
     """记录每次 dispatch 收到的 query 与 context，回显固定结果。
@@ -325,3 +331,174 @@ def test_http_auth_required():
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# ---- P4.2 动态凭证：连接参数构建 + 提供器 + handler 文案 ----
+
+
+def _byok_manifest() -> SkillManifest:
+    return SkillManifest(
+        skill_id="region-mcp",
+        name="区域天气",
+        description="区域天气查询",
+        intent="region_forecast",
+        entry_tool="get_region_forecast",
+        mcp_server={"transport": "http", "url": "http://127.0.0.1:9100/mcp"},
+        tools=[
+            {
+                "name": "get_region_forecast",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
+            }
+        ],
+        credentials={
+            "type": "byok",
+            "schema": [
+                {
+                    "key": "api_key",
+                    "label": "API Key",
+                    "type": "secret",
+                    "required": True,
+                    "help": "区域服务密钥",
+                    "inject": {"where": "header", "name": "X-API-Key", "prefix": "Bearer "},
+                },
+                {
+                    "key": "region",
+                    "label": "区域",
+                    "type": "select",
+                    "required": True,
+                    "options": ["cn", "us"],
+                    "inject": {"where": "query", "name": "region"},
+                },
+                {
+                    "key": "endpoint",
+                    "label": "自定义端点",
+                    "type": "string",
+                    "required": False,
+                    "inject": {"where": "header", "name": "X-Endpoint"},
+                },
+            ],
+        },
+    )
+
+
+class _FakeCredProvider:
+    """只回显预置 values 的凭证提供器（隔离 store_client）。"""
+
+    def __init__(self, values: dict | None = None):
+        self._values = values or {}
+
+    def get(self, user_id, skill_id):
+        return self._values
+
+
+def _bare_client(manifest, provider, user_id="u1") -> McpToolClient:
+    """绕开 __init__ 起线程，只测 _build_connection_params 纯逻辑。"""
+    c = McpToolClient.__new__(McpToolClient)
+    c._m = manifest
+    c._cred_provider = provider
+    c._user_id = user_id
+    return c
+
+
+def test_build_connection_params_type_none():
+    m = _byok_manifest()
+    m.credentials = {"type": "none"}
+    c = _bare_client(m, _FakeCredProvider())
+    url, headers = c._build_connection_params()
+    assert url == "http://127.0.0.1:9100/mcp" and headers == {}
+
+
+def test_build_connection_params_rejects_web_or_invalid_url():
+    m = _byok_manifest()
+    m.mcp_server = {"transport": "http", "url": "handler://flutter/index.html"}
+    c = _bare_client(m, _FakeCredProvider())
+    with pytest.raises(McpSkillError, match="MCP 地址无效"):
+        c._build_connection_params()
+
+
+def test_mcp_client_connection_is_lazy():
+    """装配用户技能时不应立即启动后台网络连接。"""
+    client = McpToolClient(_byok_manifest(), credential_provider=_FakeCredProvider())
+    try:
+        assert client._started is False
+        assert client._loop_thread.is_alive() is False
+    finally:
+        client.close()
+
+
+def test_build_connection_params_byok_injects_header_and_query():
+    c = _bare_client(
+        _byok_manifest(), _FakeCredProvider({"api_key": "k123", "region": "cn"})
+    )
+    url, headers = c._build_connection_params()
+    assert headers == {"X-API-Key": "Bearer k123"}  # secret → header，带 prefix
+    assert url == "http://127.0.0.1:9100/mcp?region=cn"  # select → query，重写 URL
+
+
+def test_build_connection_params_optional_missing_skipped():
+    """非必填字段未配置：不注入（不发空头），必填字段照常注入。"""
+    c = _bare_client(_byok_manifest(), _FakeCredProvider({"api_key": "k1", "region": "us"}))
+    url, headers = c._build_connection_params()
+    assert headers == {"X-API-Key": "Bearer k1"}
+    assert "X-Endpoint" not in headers and "endpoint" not in url
+
+
+def test_build_connection_params_missing_required_raises():
+    c = _bare_client(_byok_manifest(), _FakeCredProvider({"api_key": "k1"}))  # 缺 region
+    with pytest.raises(McpSkillError, match="缺少必填凭证：区域"):
+        c._build_connection_params()
+
+
+def test_build_connection_params_no_provider_raises():
+    c = _bare_client(_byok_manifest(), None)
+    with pytest.raises(McpSkillError, match="未配置凭证提供器"):
+        c._build_connection_params()
+
+
+def test_credential_provider_returns_values():
+    store = type("S", (), {"get_credentials_plain": lambda self, u, s: {"configured": True, "values": {"api_key": "k"}}})()
+    assert SkillCredentialProvider(store).get("u1", "region-mcp") == {"api_key": "k"}
+
+
+def test_credential_provider_unconfigured_returns_empty():
+    store = type("S", (), {"get_credentials_plain": lambda self, u, s: {"configured": False, "values": {}}})()
+    assert SkillCredentialProvider(store).get("u1", "region-mcp") == {}
+
+
+def test_credential_provider_store_down_raises_mcp_error():
+    store = type("S", (), {"get_credentials_plain": lambda self, u, s: (_ for _ in ()).throw(StoreUnavailable("挂"))})()
+    with pytest.raises(McpSkillError, match="凭证服务不可用"):
+        SkillCredentialProvider(store).get("u1", "region-mcp")
+
+
+class _FakeCallClient:
+    """call_tool 直接抛预设异常（隔离真实 MCP 连接）。"""
+
+    def __init__(self, exc=None):
+        self._exc = exc
+
+    def call_tool(self, name, arguments, timeout=30):
+        if self._exc:
+            raise self._exc
+        return "ok"
+
+
+def _handler_with_client(exc=None) -> MCPHandler:
+    return MCPHandler(_byok_manifest(), _FakeCallClient(exc))
+
+
+def test_handler_missing_cred_friendly_message():
+    r = _handler_with_client(McpSkillError("缺少必填凭证：区域")).handle(
+        "深圳", RouteContext()
+    )
+    assert r.status == "failed"
+    assert r.text == "需要先配置「区域天气」的凭证：区域"
+
+
+def test_handler_other_mcp_error_keeps_unavailable_text():
+    r = _handler_with_client(McpSkillError("tool 超时")).handle("深圳", RouteContext())
+    assert r.status == "failed"
+    assert r.text == "区域天气 暂不可用：tool 超时"

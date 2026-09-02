@@ -5,6 +5,15 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM"/>
+    <!-- 高德导航 SDK 所需权限 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <application
         android:label="语音助手"
@@ -19,7 +28,7 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustPan">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues
@@ -32,12 +41,44 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 高德 AmapLinkClient 回调：接收高德地图的授权/数据回调 -->
+            <!-- host 需替换为你的高德 API Key -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="amapuri"
+                    android:host="YOUR_AMAP_API_KEY" />
+            </intent-filter>
         </activity>
+        <!-- 高德 Agent SDK POC 验证页面 -->
+        <activity
+            android:name=".navigation.AgentPocActivity"
+            android:exported="false"
+            android:label="Agent SDK POC"
+            android:theme="@style/LaunchTheme" />
+        <!-- 高德导航自带界面（AMapNaviView）承载页：手机端用高德原生导航 UI 替代 Flutter 自绘导航 UI -->
+        <activity
+            android:name=".navigation.AmapNaviViewActivity"
+            android:exported="false"
+            android:label="导航"
+            android:configChanges="orientation|keyboardHidden|screenSize|uiMode|screenLayout"
+            android:theme="@style/LaunchTheme" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 高德地图 API Key -->
+        <meta-data
+            android:name="com.amap.api.v2.apikey"
+            android:value="a188be830fac2a043781b481c4a8dc27" />
+        <!-- 高德导航服务（后台导航保活） -->
+        <service
+            android:name="com.amap.api.navi.NaviService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
@@ -68,5 +109,17 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
         </intent>
+        <!-- 高德地图：Intent 拉起导航需要 androidamap scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="androidamap"/>
+        </intent>
+        <!-- 高德地图：AmapLinkClient 回调需要 amapuri scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="amapuri"/>
+        </intent>
+        <!-- 高德地图 App 包名（Android 11+ 需显式声明才能检测是否安装） -->
+        <package android:name="com.autonavi.minimap" />
     </queries>
 </manifest>

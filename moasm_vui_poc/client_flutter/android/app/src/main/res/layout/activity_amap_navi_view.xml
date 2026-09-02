@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 高德导航自带界面（AMapNaviView）承载布局：全屏展示高德原生导航 UI。
+     顶层叠：实时识别文字、底部输入栏（文本输入 + 麦克风 + 发送）。
+     文本输入是导航途中与语音助手交互的可靠方式，麦克风为可选。 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <com.amap.api.navi.AMapNaviView
+        android:id="@+id/navi_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 实时识别文字：听写时显示用户所说内容，输入完成自动隐藏 -->
+    <TextView
+        android:id="@+id/navi_speech_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="176dp"
+        android:background="@drawable/speech_text_bg"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:maxLines="3"
+        android:ellipsize="end"
+        android:minWidth="120dp"
+        android:gravity="center"
+        android:textColor="#FFFFFFFF"
+        android:textSize="18sp"
+        android:visibility="gone"
+        android:contentDescription="语音识别文字" />
+
+    <!-- 底部输入栏：文本输入 + 麦克风(按下说话) + 发送 -->
+    <LinearLayout
+        android:id="@+id/input_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="#99000000">
+
+        <EditText
+            android:id="@+id/navi_input"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:background="@drawable/input_bg"
+            android:hint="输入指令，如：结束导航 / 导航去公司"
+            android:textColor="#FFFFFFFF"
+            android:textColorHint="#B0FFFFFF"
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp"
+            android:imeOptions="actionSend"
+            android:inputType="text"
+            android:maxLines="2"
+            android:textSize="15sp"
+            android:contentDescription="导航指令输入" />
+
+        <!-- 麦克风：按下说话、松手结束 -->
+        <ImageButton
+            android:id="@+id/mic_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/mic_circle"
+            android:src="@android:drawable/ic_btn_speak_now"
+            android:scaleType="centerInside"
+            android:padding="12dp"
+            android:contentDescription="语音输入" />
+
+        <!-- 发送：把输入框文字发给语音助手 -->
+        <ImageButton
+            android:id="@+id/send_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/mic_circle"
+            android:src="@android:drawable/ic_menu_send"
+            android:scaleType="centerInside"
+            android:padding="12dp"
+            android:contentDescription="发送" />
+    </LinearLayout>
+</FrameLayout>

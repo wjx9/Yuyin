@@ -1,0 +1,39 @@
+{
+  "skill_id": "mcdonalds-my-coupons-mcp",
+  "name": "麦当劳我的优惠券",
+  "icon": "🎫",
+  "description": "查询用户有哪些可用的麦当劳优惠券，包括优惠券列表、有效期、使用条件、数量和状态。就像打开麦当劳App的我的优惠券页面。",
+  "intent": "mcdonalds_my_coupons",
+  "pc_only": false,
+  "entry_tool": "query-my-coupons",
+  "query_slot": "query",
+  "keywords": ["我的优惠券", "麦当劳优惠券", "我有哪些优惠券", "我有哪些麦当劳优惠券", "可用优惠券", "优惠券列表", "优惠券有效期", "麦当劳卡券", "我的卡券", "查一下我的优惠券", "看看我的优惠券", "我的麦当劳优惠券"],
+  "replaces": [],
+  "mcp_server": { "transport": "http", "url": "https://mcp.mcd.cn" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "mcp_token",
+        "label": "MCP Token",
+        "type": "secret",
+        "required": true,
+        "placeholder": "输入麦当劳 MCP Token",
+        "help": "在 https://open.mcd.cn/mcp 登录 → 控制台 → 激活 获取 Token（与麦当劳门店查询/积分抽奖/一键领券共用同一个 Token）",
+        "inject": { "where": "header", "name": "Authorization", "prefix": "Bearer " }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "query-my-coupons",
+      "description": "查询我有哪些可用的优惠券。就像打开麦当劳App的我的优惠券页面，能看到所有可以用来点餐的优惠券列表。包括优惠券的有效期、使用条件、数量和状态。When：\n- 用户想知道自己有哪些优惠券可以用\n- 检查优惠券的有效期和使用条件\n- 查看优惠券数量和状态\nInput：无需入参",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ],
+  "default_status": "inactive"
+}

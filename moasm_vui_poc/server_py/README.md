@@ -182,7 +182,8 @@ server_py/                      # 后端引擎：多能力分流 + HTTP 服务�
 ├── amap_client/                # provider：高德地图（REST 默认 / A2A 可切，见 §8.8）
 ├── tencent_news_client/        # provider：腾讯新闻（官方 Skill/CLI 子进程封装）
 ├── music163/                   # provider：网易云音乐（@music163/ncm-cli 封装，见 §8.11）
-├── routing/                    # 顶层编排（分流）层，依赖各 provider
+├── tools/                      # 统一工具调用层（ToolSpec/Registry/Runtime/Adapter）
+├── routing/                    # 兼容路由层与现有 Handler 实现
 │   ├── handler.py / classifier.py / dispatcher.py / gemini.py / factory.py
 │   └── handlers/               # 薄适配器：tripnow / kuaidi100 / amap / tencent_news / chitchat
 ├── server/                     # client-server 服务端适配层（见 §8.10）

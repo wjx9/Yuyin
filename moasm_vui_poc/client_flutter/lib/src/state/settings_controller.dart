@@ -12,6 +12,7 @@ import '../config/app_config.dart';
 
 class SettingsController extends ChangeNotifier {
   static const _kServerUrl = 'server_url';
+  static const _kStoreUrl = 'store_url';
   static const _kAuthToken = 'auth_token';
   static const _kLocation = 'location';
   static const _kUserId = 'user_id';
@@ -35,32 +36,41 @@ class SettingsController extends ChangeNotifier {
     }
     _config = AppConfig(
       serverUrl: prefs.getString(_kServerUrl) ?? _defaultServerUrl,
+      storeUrl: _nullIfEmpty(prefs.getString(_kStoreUrl)), // null=跟随服务端派生，见 AppConfig.effectiveStoreUrl
       authToken: _nullIfEmpty(prefs.getString(_kAuthToken)),
       location: prefs.getString(_kLocation) ?? _defaultLocation,
-      userId: _nullIfEmpty(prefs.getString(_kUserId)) ?? 'mock-user',
+      userId: _nullIfEmpty(prefs.getString(_kUserId)) ?? 'demo', // 对齐商店演示用户（app_config.dart 同），防新装首启按用户装配失效
       sessionId: sessionId,
     );
     notifyListeners();
   }
 
   /// 更新设置页可改的字段（留空的字段保持不变；显式清空用 clearXxx）。
+  /// userId 决定商店按用户装配的技能（P3），改完 ChatController 会自动重建 _api 并重探活。
   Future<void> update({
     String? serverUrl,
+    String? storeUrl,
     String? authToken,
     String? location,
+    String? userId,
   }) async {
     _config = _config.copyWith(
       serverUrl: serverUrl,
+      storeUrl: storeUrl,
       authToken: authToken,
       location: location,
+      userId: userId,
       clearAuthToken: authToken != null && authToken.isEmpty,
       clearLocation: location != null && location.isEmpty,
+      clearStoreUrl: storeUrl != null && storeUrl.isEmpty,
     );
     final prefs = _prefs;
     if (prefs != null) {
       if (serverUrl != null) await prefs.setString(_kServerUrl, serverUrl);
+      if (storeUrl != null) await prefs.setString(_kStoreUrl, storeUrl);
       if (authToken != null) await prefs.setString(_kAuthToken, authToken);
       if (location != null) await prefs.setString(_kLocation, location);
+      if (userId != null) await prefs.setString(_kUserId, userId);
     }
     notifyListeners();
   }

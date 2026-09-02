@@ -1,0 +1,39 @@
+{
+  "skill_id": "mcdonalds-coupon-mcp",
+  "name": "麦当劳一键领券",
+  "icon": "🎟️",
+  "description": "自动领取麦麦省中当前所有可领取的麦当劳优惠券。无需指定具体优惠券，系统自动领取用户可领取的所有优惠券。适用于用户要求领券、自动领取优惠券、一键领券等场景。",
+  "intent": "mcdonalds_coupon",
+  "pc_only": false,
+  "entry_tool": "auto-bind-coupons",
+  "query_slot": "query",
+  "keywords": ["帮我领券", "帮我领", "自动领取优惠券", "一键领券", "麦当劳领券", "麦麦省领券", "领优惠券", "领取优惠券", "领券"],
+  "replaces": [],
+  "mcp_server": { "transport": "http", "url": "https://mcp.mcd.cn" },
+  "credentials": {
+    "type": "byok",
+    "schema": [
+      {
+        "key": "mcp_token",
+        "label": "MCP Token",
+        "type": "secret",
+        "required": true,
+        "placeholder": "输入麦当劳 MCP Token",
+        "help": "在 https://open.mcd.cn/mcp 登录 → 控制台 → 激活 获取 Token（与麦当劳门店查询/积分抽奖共用同一个 Token）",
+        "inject": { "where": "header", "name": "Authorization", "prefix": "Bearer " }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "auto-bind-coupons",
+      "description": "自动领取麦麦省中当前所有可领取的麦当劳优惠券。无需指定具体的优惠券或 couponId，系统会自动领取用户可领取的所有优惠券。When：\n- 用户说\"帮我领券\"、\"自动领取优惠券\"或\"一键领券\"\n- 用户想领取麦当劳优惠券\nInput：无需入参",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ],
+  "default_status": "inactive"
+}

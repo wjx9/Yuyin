@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 
 from routing import RouteContext, RouteResult
 from routing.dispatcher import Dispatcher
+from tools import ToolRuntime
 
 from .composer import ResultComposer
 from .models import AssistantResult
@@ -42,23 +43,25 @@ class AssistantGraph:
         composer: ResultComposer,
         analyzer: RequestAnalyzer,
         decider: ActionDecider,
+        runtime: ToolRuntime | None = None,
     ):
         self._dispatcher = dispatcher
         self._composer = composer
         self._analyzer = analyzer
         self._decider = decider
+        self._runtime = runtime or ToolRuntime.from_dispatcher(dispatcher)
         self._graph = self._build_graph()
 
     @property
     def capabilities(self) -> list[str]:
-        return self._dispatcher.intents
+        return self._runtime.names("pc")
 
     @property
     def specs(self):
         return self._dispatcher.specs
 
     def capabilities_for(self, platform: str = "pc") -> list[str]:
-        return self._dispatcher.intents_for(platform)
+        return self._runtime.names(platform)
 
     def run(self, query: str, context: RouteContext) -> AssistantResult:
         started = time.perf_counter()
@@ -143,7 +146,7 @@ class AssistantGraph:
                 query=state["query"],
                 analysis=analysis,
                 observations=_observations(results),
-                specs=self._dispatcher.visible_specs(context.platform),
+                specs=self._runtime.specs(context.platform),
                 history=context.history,
                 remaining_steps=max(remaining, 0),
                 executed_actions=state.get("executed_actions", []),
@@ -210,11 +213,11 @@ class AssistantGraph:
         def execute(action: AgentAction) -> RouteResult:
             task_context = replace(state["context"], slots=dict(action.slots))
             try:
-                return self._dispatcher.execute(
-                    intent=action.intent,
+                return self._runtime.invoke(
+                    tool_name=action.intent,
                     query=action.query,
                     context=task_context,
-                    slots=action.slots,
+                    arguments=action.slots,
                 )
             except Exception as error:
                 _log.warning(
@@ -255,7 +258,7 @@ class AssistantGraph:
         results = list(state.get("results", []))
         decision = state["decision"]
         follow_up = _follow_up_text(
-            decision, self._dispatcher.visible_specs(state["context"].platform)
+            decision, self._runtime.specs(state["context"].platform)
         )
         if not results and not state["context"].history and not follow_up:
             text = _unavailable_text(state["analysis"])

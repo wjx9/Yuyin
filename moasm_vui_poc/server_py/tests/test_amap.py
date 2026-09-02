@@ -1007,3 +1007,89 @@ def test_driving_route_uses_gps_origin_when_supplied():
     assert session.calls[1]["path"] == "text"
     assert session.calls[2]["params"]["origin"] == "113.946,22.545"
     assert route.origin.formatted_address == "当前位置"
+
+
+def test_regeo_handler_prefers_user_supplied_coordinate():
+    from amap_client.models import GeoPoint
+    from amap_client.errors import AmapError
+    from routing.handler import RouteContext
+    from routing.handlers.amap_regeo import AmapRegeoHandler
+
+    class FakeService:
+        def __init__(self):
+            self.location = None
+
+        def reverse_geocode(self, location):
+            self.location = location
+            return GeoPoint(
+                formatted_address="浙江省杭州市西湖区",
+                location=location,
+                adcode="330106",
+                city="杭州市",
+            )
+
+    service = FakeService()
+    handler = AmapRegeoHandler(service, default_location="0,0")
+    result = handler.handle(
+        "东经120.130396度，北纬30.259242度在哪里",
+        RouteContext(
+            location="113.9,22.5",
+            slots={"location": "120.130396,30.259242"},
+            metadata={"location_source": "mobile_gps"},
+        ),
+    )
+
+    assert service.location == "120.130396,30.259242"
+    assert "浙江省杭州市西湖区" in result.text
+
+
+def test_regeo_handler_normalizes_chinese_coordinate_expression():
+    from amap_client.models import GeoPoint
+    from routing.handler import RouteContext
+    from routing.handlers.amap_regeo import AmapRegeoHandler
+
+    class FakeService:
+        def __init__(self):
+            self.location = None
+
+        def reverse_geocode(self, location):
+            self.location = location
+            return GeoPoint(formatted_address="杭州市", location=location)
+
+    service = FakeService()
+    handler = AmapRegeoHandler(service, default_location="0,0")
+    handler.handle(
+        "查询坐标",
+        RouteContext(slots={"location": "东经120.130396度，北纬30.259242度"}),
+    )
+
+    assert service.location == "120.130396,30.259242"
+
+
+def test_regeo_handler_ignores_natural_language_location_slot_and_uses_request_gps():
+    """决策器误把动作描述放进 location 时，不能覆盖手机 GPS。"""
+    from amap_client.models import GeoPoint
+    from routing.handler import RouteContext
+    from routing.handlers.amap_regeo import AmapRegeoHandler
+
+    class FakeService:
+        def __init__(self):
+            self.location = None
+
+        def reverse_geocode(self, location):
+            self.location = location
+            return GeoPoint(formatted_address="深圳市南山区", location=location)
+
+    service = FakeService()
+    handler = AmapRegeoHandler(service, default_location="120.0,30.0")
+    result = handler.handle(
+        "我现在在哪",
+        RouteContext(
+            location="113.921709,22.574881",
+            slots={"location": "查询用户当前所在位置"},
+            metadata={"location_source": "mobile_gps"},
+        ),
+    )
+
+    assert service.location == "113.921709,22.574881"
+    assert "深圳市南山区" in result.text

@@ -8,6 +8,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'src/services/speech_service.dart';
@@ -35,6 +36,25 @@ Future<void> main() async {
 
   // 启动即探活：把服务端已启用能力取回来（连不上则在界面顶部提示去设置）
   chat.refreshHealth();
+
+  // 原生导航页（AmapNaviViewActivity）与语音助手交互：
+  // - startListening / stopListening：按下说话、松手结束
+  // - sendNaviText：导航页文本输入，直接发送给助手
+  const assistantChannel = MethodChannel('com.rayneo.moasm_vui/assistant');
+  assistantChannel.setMethodCallHandler((call) async {
+    switch (call.method) {
+      case 'startListening':
+        await chat.startListening();
+        break;
+      case 'stopListening':
+        await chat.stopListening();
+        break;
+      case 'sendNaviText':
+        final text = call.arguments as String? ?? '';
+        if (text.isNotEmpty) await chat.sendText(text);
+        break;
+    }
+  });
 
   runApp(MoasmVuiApp(settings: settings, chat: chat));
 }

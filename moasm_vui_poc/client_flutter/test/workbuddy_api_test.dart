@@ -94,6 +94,7 @@ void main() {
               'pagination': {'total': 1},
             }),
             200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
           );
         }),
       );

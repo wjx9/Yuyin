@@ -48,6 +48,10 @@ class Dispatcher:
         """各能力的 (id, description)，供呈现层生成用法介绍等（PC 全量）。"""
         return list(self._specs)
 
+    def handler_for(self, intent: str) -> Handler | None:
+        """供统一 ToolRegistry 读取实现；业务调用仍走 ToolRuntime。"""
+        return self._handlers.get(intent)
+
     def visible_specs(self, platform: str = "pc") -> list[IntentSpec]:
         """返回指定端可用的能力说明，供 LangGraph Planner 选择任务。"""
         return self._specs_for(platform)

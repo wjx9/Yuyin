@@ -2,6 +2,10 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // 高德 Maven 仓库（Agent SDK，尝试多个地址）
+        maven { url = uri("https://developer.amap.com/android/repo/") }
+        // maven { url = uri("https://maven.amap.com/nexus/content/repositories/releases/") }
+        // maven { url = uri("https://aamap.artifactory.alipay.com/android") }
     }
 }
 
